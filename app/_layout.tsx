@@ -11,8 +11,9 @@ export default function RootLayout() {
   const segments = useSegments();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    // Force signOut pour vider la session corrompue (TEMPORAIRE)
+    supabase.auth.signOut().then(() => {
+      setSession(null);
       setLoading(false);
     });
 
