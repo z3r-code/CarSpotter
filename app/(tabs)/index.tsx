@@ -1,4 +1,5 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Location from 'expo-location';
 import { useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../supabase';
@@ -30,13 +31,27 @@ export default function ScannerScreen() {
 
     await cameraRef.current.takePictureAsync({ quality: 0.5 });
 
+    // Demande la permission GPS et récupère la position
+    let latitude: number | null = null;
+    let longitude: number | null = null;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        latitude = loc.coords.latitude;
+        longitude = loc.coords.longitude;
+      }
+    } catch (e) {
+      console.log('GPS non disponible:', e);
+    }
+
     setTimeout(async () => {
       const fakeCar = {
-        make: "Audi",
-        model: "R8",
-        engine: "V10 5.2L",
+        make: 'Audi',
+        model: 'R8',
+        engine: 'V10 5.2L',
         horsepower: 570,
-        rarity: "épique",
+        rarity: 'épique',
       };
 
       setScanResult(fakeCar);
@@ -51,6 +66,8 @@ export default function ScannerScreen() {
           engine: fakeCar.engine,
           horsepower: fakeCar.horsepower,
           rarity: fakeCar.rarity,
+          latitude,
+          longitude,
         });
         if (error) {
           console.log('Erreur Supabase:', error.message);
