@@ -21,11 +21,17 @@ export default function MapScreen() {
   useEffect(() => { fetchSpots(); }, []);
 
   const fetchSpots = async () => {
+    // On récupère uniquement les spots de l'utilisateur connecté
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
     const { data, error } = await supabase
       .from('spots')
       .select('id, make, model, rarity, latitude, longitude, photo_url, spotted_at')
+      .eq('user_id', user.id)
       .not('latitude', 'is', null)
       .not('longitude', 'is', null);
+
     if (!error && data) setSpots(data);
     setLoading(false);
   };
@@ -55,8 +61,8 @@ export default function MapScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>🗺️ Carte des Spots</Text>
-        <Text style={styles.headerSub}>{spots.length} spot{spots.length > 1 ? 's' : ''} dans le monde</Text>
+        <Text style={styles.headerTitle}>🗺️ Mes Spots</Text>
+        <Text style={styles.headerSub}>{spots.length} spot{spots.length > 1 ? 's' : ''} sur ta carte</Text>
       </View>
 
       <MapView
@@ -74,11 +80,7 @@ export default function MapScreen() {
             <Callout tooltip>
               <View style={styles.callout}>
                 {spot.photo_url ? (
-                  <Image
-                    source={{ uri: spot.photo_url }}
-                    style={styles.calloutPhoto}
-                    resizeMode="cover"
-                  />
+                  <Image source={{ uri: spot.photo_url }} style={styles.calloutPhoto} resizeMode="cover" />
                 ) : (
                   <View style={styles.calloutPhotoPlaceholder}>
                     <Text style={{ fontSize: 28 }}>🚗</Text>
