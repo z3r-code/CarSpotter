@@ -1,5 +1,5 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
 import { useRef, useState } from 'react';
 import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -61,7 +61,6 @@ export default function ScannerScreen() {
       (async () => {
         if (!user) return;
         try {
-          // Utilise le string 'base64' directement (compatible toutes versions expo-file-system)
           const base64 = await FileSystem.readAsStringAsync(photo.uri, {
             encoding: 'base64' as any,
           });
