@@ -1,8 +1,19 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system';
 import * as Location from 'expo-location';
 import { useRef, useState } from 'react';
 import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../supabase';
+
+// Convertit base64 en ArrayBuffer (compatible Hermes/React Native)
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
 
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -29,7 +40,7 @@ export default function ScannerScreen() {
     setIsScanning(true);
     setSaved(false);
 
-    const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
+    const photo = await cameraRef.current.takePictureAsync({ quality: 0.6 });
     const { data: { user } } = await supabase.auth.getUser();
 
     let latitude: number | null = null;
@@ -37,6 +48,7 @@ export default function ScannerScreen() {
     let photoUrl: string | null = null;
 
     await Promise.all([
+      // GPS
       (async () => {
         try {
           const { status } = await Location.requestForegroundPermissionsAsync();
@@ -47,15 +59,19 @@ export default function ScannerScreen() {
           }
         } catch (e) { console.log('GPS error:', e); }
       })(),
+
+      // Upload photo via expo-file-system (méthode fiable pour Expo Go)
       (async () => {
         if (!user) return;
         try {
-          const response = await fetch(photo.uri);
-          const blob = await response.blob();
+          const base64 = await FileSystem.readAsStringAsync(photo.uri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          const arrayBuffer = base64ToArrayBuffer(base64);
           const fileName = `${user.id}_${Date.now()}.jpg`;
           const { error: uploadError } = await supabase.storage
             .from('spot-photos')
-            .upload(fileName, blob, { contentType: 'image/jpeg' });
+            .upload(fileName, arrayBuffer, { contentType: 'image/jpeg' });
           if (!uploadError) {
             const { data: { publicUrl } } = supabase.storage
               .from('spot-photos')
@@ -66,6 +82,8 @@ export default function ScannerScreen() {
           }
         } catch (e) { console.log('Upload failed:', e); }
       })(),
+
+      // Délai IA
       new Promise(resolve => setTimeout(resolve, 2000)),
     ]);
 
@@ -101,6 +119,7 @@ export default function ScannerScreen() {
 
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
+      case 'platine': return '#00FFFF';
       case 'légendaire': return '#FFD700';
       case 'épique': return '#9B59B6';
       case 'rare': return '#3498DB';
