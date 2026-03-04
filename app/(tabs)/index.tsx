@@ -1,7 +1,7 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import { useRef, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../supabase';
 
 export default function ScannerScreen() {
@@ -29,59 +29,75 @@ export default function ScannerScreen() {
     setIsScanning(true);
     setSaved(false);
 
-    await cameraRef.current.takePictureAsync({ quality: 0.5 });
+    const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
+    const { data: { user } } = await supabase.auth.getUser();
 
-    // Demande la permission GPS et récupère la position
     let latitude: number | null = null;
     let longitude: number | null = null;
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        latitude = loc.coords.latitude;
-        longitude = loc.coords.longitude;
-      }
-    } catch (e) {
-      console.log('GPS non disponible:', e);
+    let photoUrl: string | null = null;
+
+    await Promise.all([
+      (async () => {
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            latitude = loc.coords.latitude;
+            longitude = loc.coords.longitude;
+          }
+        } catch (e) { console.log('GPS error:', e); }
+      })(),
+      (async () => {
+        if (!user) return;
+        try {
+          const response = await fetch(photo.uri);
+          const blob = await response.blob();
+          const fileName = `${user.id}_${Date.now()}.jpg`;
+          const { error: uploadError } = await supabase.storage
+            .from('spot-photos')
+            .upload(fileName, blob, { contentType: 'image/jpeg' });
+          if (!uploadError) {
+            const { data: { publicUrl } } = supabase.storage
+              .from('spot-photos')
+              .getPublicUrl(fileName);
+            photoUrl = publicUrl;
+          } else {
+            console.log('Upload error:', uploadError.message);
+          }
+        } catch (e) { console.log('Upload failed:', e); }
+      })(),
+      new Promise(resolve => setTimeout(resolve, 2000)),
+    ]);
+
+    const fakeCar = {
+      make: 'Audi',
+      model: 'R8',
+      engine: 'V10 5.2L',
+      horsepower: 570,
+      rarity: 'épique',
+    };
+
+    setScanResult({ ...fakeCar, photo_url: photoUrl });
+    setIsScanning(false);
+
+    if (user) {
+      const { error } = await supabase.from('spots').insert({
+        user_id: user.id,
+        make: fakeCar.make,
+        model: fakeCar.model,
+        engine: fakeCar.engine,
+        horsepower: fakeCar.horsepower,
+        rarity: fakeCar.rarity,
+        latitude,
+        longitude,
+        photo_url: photoUrl,
+      });
+      if (error) console.log('Supabase error:', error.message);
+      else setSaved(true);
     }
-
-    setTimeout(async () => {
-      const fakeCar = {
-        make: 'Audi',
-        model: 'R8',
-        engine: 'V10 5.2L',
-        horsepower: 570,
-        rarity: 'épique',
-      };
-
-      setScanResult(fakeCar);
-      setIsScanning(false);
-
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { error } = await supabase.from('spots').insert({
-          user_id: user.id,
-          make: fakeCar.make,
-          model: fakeCar.model,
-          engine: fakeCar.engine,
-          horsepower: fakeCar.horsepower,
-          rarity: fakeCar.rarity,
-          latitude,
-          longitude,
-        });
-        if (error) {
-          console.log('Erreur Supabase:', error.message);
-        } else {
-          setSaved(true);
-        }
-      }
-    }, 2000);
   };
 
-  const resetScan = () => {
-    setScanResult(null);
-    setSaved(false);
-  };
+  const resetScan = () => { setScanResult(null); setSaved(false); };
 
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
@@ -96,6 +112,14 @@ export default function ScannerScreen() {
     return (
       <ScrollView contentContainerStyle={styles.resultContainer}>
         <Text style={styles.successText}>🎯 SPOT RÉUSSI !</Text>
+
+        {scanResult.photo_url ? (
+          <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
+        ) : (
+          <View style={styles.resultPhotoPlaceholder}>
+            <Text style={{ color: '#444', fontSize: 40 }}>📷</Text>
+          </View>
+        )}
 
         <View style={[styles.rarityBadge, { backgroundColor: getRarityColor(scanResult.rarity) }]}>
           <Text style={styles.rarityText}>{scanResult.rarity.toUpperCase()}</Text>
@@ -137,7 +161,6 @@ export default function ScannerScreen() {
           <View style={styles.cornerBL} />
           <View style={styles.cornerBR} />
         </View>
-
         {isScanning ? (
           <View style={styles.overlay}>
             <ActivityIndicator size="large" color="#00ff00" />
@@ -172,6 +195,8 @@ const styles = StyleSheet.create({
   scanningText: { color: '#00ff00', fontSize: 20, fontWeight: 'bold', marginTop: 20 },
   resultContainer: { flexGrow: 1, backgroundColor: '#000', alignItems: 'center', padding: 24, paddingTop: 80 },
   successText: { color: '#00ff00', fontSize: 28, fontWeight: 'bold', marginBottom: 16 },
+  resultPhoto: { width: '100%', height: 200, borderRadius: 16, marginBottom: 16 },
+  resultPhotoPlaceholder: { width: '100%', height: 200, borderRadius: 16, backgroundColor: '#111', marginBottom: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#222' },
   rarityBadge: { paddingHorizontal: 20, paddingVertical: 6, borderRadius: 20, marginBottom: 20 },
   rarityText: { color: 'white', fontWeight: 'bold', fontSize: 13, letterSpacing: 2 },
   card: { backgroundColor: '#111', borderRadius: 20, padding: 24, width: '100%', borderWidth: 1, borderColor: '#222', marginBottom: 20 },

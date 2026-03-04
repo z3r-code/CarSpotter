@@ -2,10 +2,14 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
+  Modal,
   RefreshControl,
-  StyleSheet, Text,
+  ScrollView,
+  StyleSheet,
+  Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 import { supabase } from '../../supabase';
 
@@ -16,6 +20,9 @@ type Spot = {
   engine: string;
   horsepower: number;
   rarity: string;
+  photo_url: string | null;
+  latitude: number | null;
+  longitude: number | null;
   spotted_at: string;
 };
 
@@ -24,17 +31,16 @@ export default function GarageScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({ total: 0, legendary: 0, epic: 0 });
+  const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null);
 
   const fetchSpots = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
     const { data, error } = await supabase
       .from('spots')
       .select('*')
       .eq('user_id', user.id)
       .order('spotted_at', { ascending: false });
-
     if (!error && data) {
       setSpots(data);
       setStats({
@@ -48,11 +54,7 @@ export default function GarageScreen() {
   };
 
   useEffect(() => { fetchSpots(); }, []);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchSpots();
-  };
+  const onRefresh = () => { setRefreshing(true); fetchSpots(); };
 
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
@@ -87,14 +89,84 @@ export default function GarageScreen() {
 
   return (
     <View style={styles.container}>
-      
+
+      {/* Detail Modal */}
+      <Modal
+        visible={selectedSpot !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setSelectedSpot(null)}
+      >
+        {selectedSpot && (
+          <View style={styles.modalContainer}>
+            <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedSpot(null)}>
+              <Text style={styles.modalCloseText}>✕</Text>
+            </TouchableOpacity>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {selectedSpot.photo_url ? (
+                <Image
+                  source={{ uri: selectedSpot.photo_url }}
+                  style={styles.modalPhoto}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.modalPhotoPlaceholder}>
+                  <Text style={{ fontSize: 60 }}>📷</Text>
+                  <Text style={{ color: '#444', marginTop: 8 }}>Pas de photo</Text>
+                </View>
+              )}
+
+              <View style={styles.modalContent}>
+                <Text style={styles.modalMake}>{selectedSpot.make}</Text>
+                <Text style={styles.modalModel}>{selectedSpot.model}</Text>
+
+                <View style={[styles.modalBadge, { backgroundColor: getRarityColor(selectedSpot.rarity) }]}>
+                  <Text style={styles.modalBadgeText}>
+                    {getRarityEmoji(selectedSpot.rarity)} {selectedSpot.rarity.toUpperCase()}
+                  </Text>
+                </View>
+
+                <View style={styles.modalSpecs}>
+                  <View style={styles.modalSpecRow}>
+                    <Text style={styles.modalSpecLabel}>🔧 Moteur</Text>
+                    <Text style={styles.modalSpecValue}>{selectedSpot.engine}</Text>
+                  </View>
+                  <View style={styles.modalDivider} />
+                  <View style={styles.modalSpecRow}>
+                    <Text style={styles.modalSpecLabel}>⚡ Puissance</Text>
+                    <Text style={styles.modalSpecValue}>{selectedSpot.horsepower} ch</Text>
+                  </View>
+                  <View style={styles.modalDivider} />
+                  <View style={styles.modalSpecRow}>
+                    <Text style={styles.modalSpecLabel}>📅 Spotté</Text>
+                    <Text style={styles.modalSpecValue}>{formatDate(selectedSpot.spotted_at)}</Text>
+                  </View>
+                  {selectedSpot.latitude && (
+                    <>
+                      <View style={styles.modalDivider} />
+                      <View style={styles.modalSpecRow}>
+                        <Text style={styles.modalSpecLabel}>📍 Localisation</Text>
+                        <Text style={styles.modalSpecValue}>
+                          {selectedSpot.latitude.toFixed(4)}, {selectedSpot.longitude?.toFixed(4)}
+                        </Text>
+                      </View>
+                    </>
+                  )}
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        )}
+      </Modal>
+
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>🛠️ Mon Garage</Text>
         <Text style={styles.subtitle}>{stats.total} voiture{stats.total > 1 ? 's' : ''} spottée{stats.total > 1 ? 's' : ''}</Text>
       </View>
 
-      {/* Stats rapides */}
+      {/* Stats */}
       <View style={styles.statsRow}>
         <View style={styles.statCard}>
           <Text style={styles.statNumber}>{stats.total}</Text>
@@ -110,7 +182,7 @@ export default function GarageScreen() {
         </View>
       </View>
 
-      {/* Liste des voitures */}
+      {/* Liste */}
       {spots.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyEmoji}>🚗</Text>
@@ -124,11 +196,17 @@ export default function GarageScreen() {
           contentContainerStyle={{ padding: 16 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00ff00" />}
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.spotCard} activeOpacity={0.8}>
-              
-              {/* Barre couleur rareté à gauche */}
+            <TouchableOpacity style={styles.spotCard} activeOpacity={0.8} onPress={() => setSelectedSpot(item)}>
               <View style={[styles.rarityBar, { backgroundColor: getRarityColor(item.rarity) }]} />
-              
+
+              {item.photo_url ? (
+                <Image source={{ uri: item.photo_url }} style={styles.spotThumbnail} resizeMode="cover" />
+              ) : (
+                <View style={[styles.spotThumbnail, styles.spotThumbnailEmpty]}>
+                  <Text style={{ fontSize: 22 }}>🚗</Text>
+                </View>
+              )}
+
               <View style={styles.spotContent}>
                 <View style={styles.spotHeader}>
                   <View>
@@ -137,7 +215,6 @@ export default function GarageScreen() {
                   </View>
                   <Text style={styles.rarityEmoji}>{getRarityEmoji(item.rarity)}</Text>
                 </View>
-                
                 <View style={styles.spotFooter}>
                   <Text style={styles.spotSpec}>⚡ {item.horsepower} ch</Text>
                   <Text style={styles.spotSpec}>🔧 {item.engine}</Text>
@@ -155,29 +232,43 @@ export default function GarageScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   centered: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
-
   header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16 },
   title: { color: 'white', fontSize: 28, fontWeight: 'bold' },
   subtitle: { color: '#555', fontSize: 14, marginTop: 4 },
-
   statsRow: { flexDirection: 'row', paddingHorizontal: 16, gap: 10, marginBottom: 8 },
   statCard: { flex: 1, backgroundColor: '#111', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#222' },
   statNumber: { color: '#00ff00', fontSize: 24, fontWeight: 'bold' },
   statLabel: { color: '#555', fontSize: 11, marginTop: 2, textAlign: 'center' },
-
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyEmoji: { fontSize: 64, marginBottom: 16 },
   emptyText: { color: 'white', fontSize: 20, fontWeight: 'bold' },
   emptySubtext: { color: '#555', fontSize: 14, marginTop: 8 },
-
   spotCard: { flexDirection: 'row', backgroundColor: '#111', borderRadius: 14, marginBottom: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#222' },
   rarityBar: { width: 4 },
-  spotContent: { flex: 1, padding: 14 },
-  spotHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
-  spotMake: { color: '#888', fontSize: 13 },
-  spotModel: { color: 'white', fontSize: 20, fontWeight: 'bold' },
-  rarityEmoji: { fontSize: 24 },
-  spotFooter: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
+  spotThumbnail: { width: 72, height: 72, margin: 10, borderRadius: 10 },
+  spotThumbnailEmpty: { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' },
+  spotContent: { flex: 1, padding: 12 },
+  spotHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  spotMake: { color: '#888', fontSize: 12 },
+  spotModel: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  rarityEmoji: { fontSize: 22 },
+  spotFooter: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
   spotSpec: { color: '#555', fontSize: 12 },
   spotDate: { color: '#333', fontSize: 12, marginLeft: 'auto' },
+  // Modal
+  modalContainer: { flex: 1, backgroundColor: '#000' },
+  modalClose: { position: 'absolute', top: 16, right: 16, zIndex: 10, backgroundColor: '#222', borderRadius: 20, width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
+  modalCloseText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  modalPhoto: { width: '100%', height: 280 },
+  modalPhotoPlaceholder: { width: '100%', height: 280, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { padding: 24 },
+  modalMake: { color: '#888', fontSize: 16, marginBottom: 4 },
+  modalModel: { color: 'white', fontSize: 42, fontWeight: 'bold', marginBottom: 16 },
+  modalBadge: { alignSelf: 'flex-start', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginBottom: 24 },
+  modalBadgeText: { color: 'white', fontWeight: 'bold', fontSize: 14, letterSpacing: 1 },
+  modalSpecs: { backgroundColor: '#111', borderRadius: 16, borderWidth: 1, borderColor: '#222' },
+  modalSpecRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 16 },
+  modalSpecLabel: { color: '#666', fontSize: 15 },
+  modalSpecValue: { color: 'white', fontSize: 15, fontWeight: '600' },
+  modalDivider: { height: 1, backgroundColor: '#1a1a1a' },
 });
