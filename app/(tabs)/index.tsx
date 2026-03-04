@@ -5,7 +5,6 @@ import { useRef, useState } from 'react';
 import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../supabase';
 
-// Convertit base64 en ArrayBuffer (compatible Hermes/React Native)
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
@@ -48,7 +47,6 @@ export default function ScannerScreen() {
     let photoUrl: string | null = null;
 
     await Promise.all([
-      // GPS
       (async () => {
         try {
           const { status } = await Location.requestForegroundPermissionsAsync();
@@ -60,12 +58,12 @@ export default function ScannerScreen() {
         } catch (e) { console.log('GPS error:', e); }
       })(),
 
-      // Upload photo via expo-file-system (méthode fiable pour Expo Go)
       (async () => {
         if (!user) return;
         try {
+          // Utilise le string 'base64' directement (compatible toutes versions expo-file-system)
           const base64 = await FileSystem.readAsStringAsync(photo.uri, {
-            encoding: FileSystem.EncodingType.Base64,
+            encoding: 'base64' as any,
           });
           const arrayBuffer = base64ToArrayBuffer(base64);
           const fileName = `${user.id}_${Date.now()}.jpg`;
@@ -83,7 +81,6 @@ export default function ScannerScreen() {
         } catch (e) { console.log('Upload failed:', e); }
       })(),
 
-      // Délai IA
       new Promise(resolve => setTimeout(resolve, 2000)),
     ]);
 
