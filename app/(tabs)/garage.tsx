@@ -12,36 +12,12 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../../supabase';
-
-// Rarity values as stored in DB (no accents)
-// commun | rare | epique | legendaire | platine
-
-const XP_THRESHOLDS = [0, 10, 25, 50, 100];
-const LEVEL_NAMES = ['', 'Novice', 'Observateur', 'Chasseur', 'Expert', 'Legende'];
-const LEVEL_COLORS = ['', '#888888', '#3498DB', '#9B59B6', '#FFD700', '#00FFFF'];
-
-function getXpForRarity(rarity: string): number {
-  switch (rarity) {
-    case 'platine': return 20;
-    case 'legendaire': return 15;
-    case 'epique': return 10;
-    case 'rare': return 5;
-    default: return 1;
-  }
-}
-
-function getLevelInfo(totalXp: number) {
-  let level = 1;
-  for (let i = 1; i < XP_THRESHOLDS.length; i++) {
-    if (totalXp >= XP_THRESHOLDS[i]) level = i + 1;
-    else break;
-  }
-  const isMax = level === 5;
-  const from = XP_THRESHOLDS[level - 1];
-  const to = isMax ? XP_THRESHOLDS[4] : XP_THRESHOLDS[level];
-  const progress = isMax ? 1 : (totalXp - from) / (to - from);
-  return { level, progress, nextXp: to, currentXp: totalXp, name: LEVEL_NAMES[level], color: LEVEL_COLORS[level] };
-}
+import {
+  getLevelInfo,
+  getXpForRarity,
+  LevelInfo,
+} from '../../constants/levels';
+import LevelCardModal from '../../components/LevelCardModal';
 
 type Spot = {
   id: string;
@@ -63,17 +39,24 @@ export default function GarageScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({ total: 0, legendary: 0, epic: 0 });
   const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null);
-  const [levelInfo, setLevelInfo] = useState(getLevelInfo(0));
+  const [levelInfo, setLevelInfo] = useState<LevelInfo>(getLevelInfo(0));
+  const [levelCardVisible, setLevelCardVisible] = useState(false);
+  const [username, setUsername] = useState('Spotter');
   const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set());
 
   const fetchSpots = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
+
+    // Get username from email
+    setUsername(user.email?.split('@')[0] ?? 'Spotter');
+
     const { data, error } = await supabase
       .from('spots')
       .select('*')
       .eq('user_id', user.id)
       .order('spotted_at', { ascending: false });
+
     if (!error && data) {
       setSpots(data);
       setStats({
@@ -93,36 +76,28 @@ export default function GarageScreen() {
 
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
-      case 'platine': return '#00FFFF';
+      case 'platine':    return '#00FFFF';
       case 'legendaire': return '#FFD700';
-      case 'epique': return '#9B59B6';
-      case 'rare': return '#3498DB';
-      default: return '#555';
-    }
-  };
-
-  const getRarityEmoji = (rarity: string) => {
-    switch (rarity) {
-      case 'platine': return '\uD83D\uDC8E';
-      case 'legendaire': return '\uD83D\uDC51';
-      case 'epique': return '\uD83D\uDD25';
-      case 'rare': return '\uD83D\uDCA0';
-      default: return '\u26AA';
+      case 'epique':     return '#9B59B6';
+      case 'rare':       return '#3498DB';
+      default:           return '#555';
     }
   };
 
   const getRarityLabel = (rarity: string) => {
     switch (rarity) {
-      case 'platine': return 'PLATINE';
+      case 'platine':    return 'PLATINE';
       case 'legendaire': return 'LEGENDAIRE';
-      case 'epique': return 'EPIQUE';
-      case 'rare': return 'RARE';
-      default: return 'COMMUN';
+      case 'epique':     return 'EPIQUE';
+      case 'rare':       return 'RARE';
+      default:           return 'COMMUN';
     }
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(dateStr).toLocaleDateString('fr-FR', {
+      day: '2-digit', month: 'short', year: 'numeric',
+    });
   };
 
   const handleImageError = (id: string) => {
@@ -141,8 +116,8 @@ export default function GarageScreen() {
       );
     }
     return (
-      <View style={[styles.spotThumbnail, styles.spotThumbnailEmpty]}>
-        <Text style={{ fontSize: 22 }}>{getRarityEmoji(item.rarity)}</Text>
+      <View style={[styles.spotThumbnail, styles.spotThumbnailEmpty, { borderColor: getRarityColor(item.rarity) + '44' }]}>
+        <View style={[styles.rarityDot, { backgroundColor: getRarityColor(item.rarity) }]} />
       </View>
     );
   };
@@ -158,8 +133,21 @@ export default function GarageScreen() {
   return (
     <View style={styles.container}>
 
-      {/* Detail Modal */}
-      <Modal visible={selectedSpot !== null} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSelectedSpot(null)}>
+      {/* Level Card Modal */}
+      <LevelCardModal
+        visible={levelCardVisible}
+        onClose={() => setLevelCardVisible(false)}
+        levelInfo={levelInfo}
+        username={username}
+      />
+
+      {/* Spot Detail Modal */}
+      <Modal
+        visible={selectedSpot !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setSelectedSpot(null)}
+      >
         {selectedSpot && (
           <View style={styles.modalContainer}>
             <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedSpot(null)}>
@@ -174,17 +162,23 @@ export default function GarageScreen() {
                   onError={() => handleImageError(selectedSpot.id)}
                 />
               ) : (
-                <View style={styles.modalPhotoPlaceholder}>
-                  <Text style={{ fontSize: 60 }}>{getRarityEmoji(selectedSpot.rarity)}</Text>
-                  <Text style={{ color: '#444', marginTop: 8 }}>Pas de photo</Text>
+                <View style={[styles.modalPhotoPlaceholder, { borderBottomColor: getRarityColor(selectedSpot.rarity) }]}>
+                  <View style={[styles.rarityDotLg, { backgroundColor: getRarityColor(selectedSpot.rarity) }]} />
+                  <Text style={{ color: '#333', marginTop: 8, fontSize: 12 }}>Pas de photo</Text>
                 </View>
               )}
               <View style={styles.modalContent}>
-                <Text style={styles.modalMake}>{selectedSpot.make}{selectedSpot.year ? ` (${selectedSpot.year})` : ''}</Text>
+                <Text style={styles.modalMake}>
+                  {selectedSpot.make}{selectedSpot.year ? ` (${selectedSpot.year})` : ''}
+                </Text>
                 <Text style={styles.modalModel}>{selectedSpot.model}</Text>
-                <View style={[styles.modalBadge, { backgroundColor: getRarityColor(selectedSpot.rarity) + '33', borderColor: getRarityColor(selectedSpot.rarity), borderWidth: 1 }]}>
+                <View style={[styles.modalBadge, {
+                  backgroundColor: getRarityColor(selectedSpot.rarity) + '22',
+                  borderColor: getRarityColor(selectedSpot.rarity),
+                  borderWidth: 1,
+                }]}>
                   <Text style={[styles.modalBadgeText, { color: getRarityColor(selectedSpot.rarity) }]}>
-                    {getRarityEmoji(selectedSpot.rarity)} {getRarityLabel(selectedSpot.rarity)}
+                    {getRarityLabel(selectedSpot.rarity)}
                   </Text>
                 </View>
                 <View style={styles.modalSpecs}>
@@ -199,20 +193,24 @@ export default function GarageScreen() {
                   </View>
                   <View style={styles.modalDivider} />
                   <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>Spotte le</Text>
-                    <Text style={styles.modalSpecValue}>{formatDate(selectedSpot.spotted_at)}</Text>
+                    <Text style={styles.modalSpecLabel}>XP gagne</Text>
+                    <Text style={[styles.modalSpecValue, { color: getRarityColor(selectedSpot.rarity) }]}>
+                      +{getXpForRarity(selectedSpot.rarity)} XP
+                    </Text>
                   </View>
                   <View style={styles.modalDivider} />
                   <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>XP gagne</Text>
-                    <Text style={[styles.modalSpecValue, { color: getRarityColor(selectedSpot.rarity) }]}>+{getXpForRarity(selectedSpot.rarity)}</Text>
+                    <Text style={styles.modalSpecLabel}>Spotte le</Text>
+                    <Text style={styles.modalSpecValue}>{formatDate(selectedSpot.spotted_at)}</Text>
                   </View>
                   {selectedSpot.latitude != null && (
                     <>
                       <View style={styles.modalDivider} />
                       <View style={styles.modalSpecRow}>
                         <Text style={styles.modalSpecLabel}>Localisation</Text>
-                        <Text style={styles.modalSpecValue}>{selectedSpot.latitude.toFixed(4)}, {selectedSpot.longitude?.toFixed(4)}</Text>
+                        <Text style={styles.modalSpecValue}>
+                          {selectedSpot.latitude.toFixed(4)}, {selectedSpot.longitude?.toFixed(4)}
+                        </Text>
                       </View>
                     </>
                   )}
@@ -227,21 +225,37 @@ export default function GarageScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.title}>Mon Garage</Text>
-          <Text style={styles.subtitle}>{stats.total} voiture{stats.total > 1 ? 's' : ''} spottee{stats.total > 1 ? 's' : ''}</Text>
-        </View>
-        <View style={styles.headerRight}>
-          <View style={[styles.levelBadge, { backgroundColor: levelInfo.color + '22', borderColor: levelInfo.color }]}>
-            <Text style={[styles.levelText, { color: levelInfo.color }]}>LVL {levelInfo.level}</Text>
-          </View>
-          <Text style={[styles.levelName, { color: levelInfo.color }]}>{levelInfo.name}</Text>
-          <View style={styles.xpBarBg}>
-            <View style={{ flex: levelInfo.progress, backgroundColor: levelInfo.color, borderRadius: 3 }} />
-            <View style={{ flex: Math.max(0, 1 - levelInfo.progress) }} />
-          </View>
-          <Text style={styles.xpText}>
-            {levelInfo.level < 5 ? `${levelInfo.currentXp}/${levelInfo.nextXp}` : 'MAX'}
+          <Text style={styles.subtitle}>
+            {stats.total} voiture{stats.total > 1 ? 's' : ''} spottee{stats.total > 1 ? 's' : ''}
           </Text>
         </View>
+
+        {/* Tappable level badge -> opens LevelCard */}
+        <TouchableOpacity
+          style={styles.headerRight}
+          onPress={() => setLevelCardVisible(true)}
+          activeOpacity={0.7}
+        >
+          <View style={[
+            styles.levelBadge,
+            { backgroundColor: levelInfo.color + '22', borderColor: levelInfo.color },
+          ]}>
+            <Text style={[styles.levelText, { color: levelInfo.color }]}>LVL {levelInfo.level}</Text>
+          </View>
+          <Text style={[styles.levelName, { color: levelInfo.color }]}>{levelInfo.title}</Text>
+          <View style={styles.xpBarBg}>
+            <View style={[
+              styles.xpBarFill,
+              { flex: levelInfo.progress, backgroundColor: levelInfo.color },
+            ]} />
+            <View style={{ flex: Math.max(0, 1 - levelInfo.progress) }} />
+          </View>
+          <Text style={[styles.xpText, { color: levelInfo.color + 'aa' }]}>
+            {levelInfo.level < 99
+              ? `${levelInfo.xpInCurrentLevel}/${levelInfo.xpNeededInLevel} XP`
+              : 'MAX'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Stats */}
@@ -260,10 +274,9 @@ export default function GarageScreen() {
         </View>
       </View>
 
-      {/* Liste */}
+      {/* Spot list */}
       {spots.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={styles.emptyEmoji}>Car</Text>
           <Text style={styles.emptyText}>Ton garage est vide !</Text>
           <Text style={styles.emptySubtext}>Va scanner ta premiere voiture</Text>
         </View>
@@ -272,9 +285,15 @@ export default function GarageScreen() {
           data={spots}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 16 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00ff00" />}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00ff00" />
+          }
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.spotCard} activeOpacity={0.8} onPress={() => setSelectedSpot(item)}>
+            <TouchableOpacity
+              style={styles.spotCard}
+              activeOpacity={0.8}
+              onPress={() => setSelectedSpot(item)}
+            >
               <View style={[styles.rarityBar, { backgroundColor: getRarityColor(item.rarity) }]} />
               {renderThumbnail(item)}
               <View style={styles.spotContent}>
@@ -284,8 +303,12 @@ export default function GarageScreen() {
                     <Text style={styles.spotModel}>{item.model}</Text>
                   </View>
                   <View style={styles.spotRight}>
-                    <Text style={styles.rarityEmoji}>{getRarityEmoji(item.rarity)}</Text>
-                    <Text style={[styles.xpBadge, { color: getRarityColor(item.rarity) }]}>+{getXpForRarity(item.rarity)}</Text>
+                    <Text style={[styles.xpBadge, { color: getRarityColor(item.rarity) }]}>
+                      +{getXpForRarity(item.rarity)} XP
+                    </Text>
+                    <Text style={[styles.rarityBadgeSmall, { color: getRarityColor(item.rarity), borderColor: getRarityColor(item.rarity) + '44' }]}>
+                      {getRarityLabel(item.rarity)}
+                    </Text>
                   </View>
                 </View>
                 <View style={styles.spotFooter}>
@@ -305,51 +328,88 @@ export default function GarageScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   centered: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
-  header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  header: {
+    paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+  },
   headerLeft: { flex: 1 },
-  headerRight: { alignItems: 'flex-end', minWidth: 100 },
+  headerRight: { alignItems: 'flex-end', minWidth: 110 },
   title: { color: 'white', fontSize: 28, fontWeight: 'bold' },
   subtitle: { color: '#555', fontSize: 14, marginTop: 4 },
   levelBadge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, marginBottom: 2 },
   levelText: { fontSize: 13, fontWeight: 'bold' },
   levelName: { fontSize: 10, marginBottom: 4 },
-  xpBarBg: { width: 90, height: 5, backgroundColor: '#1a1a1a', borderRadius: 3, flexDirection: 'row', overflow: 'hidden', marginBottom: 2 },
-  xpText: { color: '#555', fontSize: 10 },
+  xpBarBg: {
+    width: 100, height: 5,
+    backgroundColor: '#1a1a1a', borderRadius: 3,
+    flexDirection: 'row', overflow: 'hidden', marginBottom: 2,
+  },
+  xpBarFill: { borderRadius: 3 },
+  xpText: { fontSize: 10 },
   statsRow: { flexDirection: 'row', paddingHorizontal: 16, gap: 10, marginBottom: 8 },
-  statCard: { flex: 1, backgroundColor: '#111', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#222' },
+  statCard: {
+    flex: 1, backgroundColor: '#111', borderRadius: 12,
+    padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#222',
+  },
   statNumber: { color: '#00ff00', fontSize: 24, fontWeight: 'bold' },
   statLabel: { color: '#555', fontSize: 11, marginTop: 2, textAlign: 'center' },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyEmoji: { fontSize: 64, marginBottom: 16, color: 'white' },
   emptyText: { color: 'white', fontSize: 20, fontWeight: 'bold' },
   emptySubtext: { color: '#555', fontSize: 14, marginTop: 8 },
-  spotCard: { flexDirection: 'row', backgroundColor: '#111', borderRadius: 14, marginBottom: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#222' },
+  spotCard: {
+    flexDirection: 'row', backgroundColor: '#111',
+    borderRadius: 14, marginBottom: 12,
+    overflow: 'hidden', borderWidth: 1, borderColor: '#222',
+  },
   rarityBar: { width: 4 },
   spotThumbnail: { width: 72, height: 72, margin: 10, borderRadius: 10 },
-  spotThumbnailEmpty: { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' },
+  spotThumbnailEmpty: {
+    backgroundColor: '#0d0d0d', justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1,
+  },
+  rarityDot: { width: 12, height: 12, borderRadius: 6 },
+  rarityDotLg: { width: 24, height: 24, borderRadius: 12 },
   spotContent: { flex: 1, padding: 12 },
-  spotHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  spotHeader: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'flex-start', marginBottom: 8,
+  },
   spotMake: { color: '#888', fontSize: 12 },
   spotModel: { color: 'white', fontSize: 18, fontWeight: 'bold' },
-  spotRight: { alignItems: 'flex-end' },
-  rarityEmoji: { fontSize: 20 },
-  xpBadge: { fontSize: 11, fontWeight: 'bold', marginTop: 2 },
+  spotRight: { alignItems: 'flex-end', gap: 3 },
+  xpBadge: { fontSize: 12, fontWeight: 'bold' },
+  rarityBadgeSmall: {
+    fontSize: 9, fontWeight: '700', letterSpacing: 0.5,
+    borderWidth: 1, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4,
+  },
   spotFooter: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
   spotSpec: { color: '#555', fontSize: 12 },
   spotDate: { color: '#333', fontSize: 12, marginLeft: 'auto' },
+  // Detail modal
   modalContainer: { flex: 1, backgroundColor: '#000' },
-  modalClose: { position: 'absolute', top: 16, right: 16, zIndex: 10, backgroundColor: '#222', borderRadius: 20, width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
-  modalCloseText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  modalClose: {
+    position: 'absolute', top: 16, right: 16, zIndex: 10,
+    backgroundColor: '#222', borderRadius: 20,
+    width: 36, height: 36, justifyContent: 'center', alignItems: 'center',
+  },
+  modalCloseText: { color: 'white', fontSize: 14, fontWeight: 'bold' },
   modalPhoto: { width: '100%', height: 280 },
-  modalPhotoPlaceholder: { width: '100%', height: 280, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center' },
+  modalPhotoPlaceholder: {
+    width: '100%', height: 280, backgroundColor: '#0d0d0d',
+    justifyContent: 'center', alignItems: 'center',
+    borderBottomWidth: 2,
+  },
   modalContent: { padding: 24 },
   modalMake: { color: '#888', fontSize: 16, marginBottom: 4 },
-  modalModel: { color: 'white', fontSize: 42, fontWeight: 'bold', marginBottom: 16 },
-  modalBadge: { alignSelf: 'flex-start', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginBottom: 24 },
-  modalBadgeText: { fontWeight: 'bold', fontSize: 14, letterSpacing: 1 },
-  modalSpecs: { backgroundColor: '#111', borderRadius: 16, borderWidth: 1, borderColor: '#222' },
+  modalModel: { color: 'white', fontSize: 36, fontWeight: 'bold', marginBottom: 16 },
+  modalBadge: {
+    alignSelf: 'flex-start', paddingHorizontal: 16,
+    paddingVertical: 6, borderRadius: 20, marginBottom: 24,
+  },
+  modalBadgeText: { fontWeight: 'bold', fontSize: 13, letterSpacing: 1 },
+  modalSpecs: { backgroundColor: '#0d0d0d', borderRadius: 16, borderWidth: 1, borderColor: '#1a1a1a' },
   modalSpecRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 16 },
-  modalSpecLabel: { color: '#666', fontSize: 15 },
+  modalSpecLabel: { color: '#555', fontSize: 15 },
   modalSpecValue: { color: 'white', fontSize: 15, fontWeight: '600' },
   modalDivider: { height: 1, backgroundColor: '#1a1a1a' },
 });
