@@ -1,7 +1,8 @@
 import { supabase } from '../supabase';
 import { CarIdentification, RarityLevel } from '../types/car.types';
 
-export const MAX_FREE_SCANS_PER_DAY = 3;
+// Change back to 3 for production
+export const MAX_FREE_SCANS_PER_DAY = 10;
 
 function getRarityFromCar(make: string, horsepower: number): RarityLevel {
   const m = make.toLowerCase();
@@ -19,7 +20,6 @@ export async function checkScanQuota(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Use spotted_at to match the actual spots table schema
   const { count, error } = await supabase
     .from('spots')
     .select('*', { count: 'exact', head: true })
@@ -27,7 +27,7 @@ export async function checkScanQuota(
     .gte('spotted_at', today.toISOString());
 
   if (error) {
-    console.warn('checkScanQuota error (fail-open):', error.message || error.code || JSON.stringify(error));
+    console.warn('checkScanQuota error (fail-open):', error.message || error.code);
     return { canScan: true, scansToday: 0 };
   }
 
@@ -50,15 +50,11 @@ export async function recognizeCar(base64Image: string): Promise<CarIdentificati
         errorMsg = `HTTP ${ctx.status ?? '?'}: ${body}`;
       }
     } catch (_) {}
-    errorMsg = errorMsg || error.constructor?.name || JSON.stringify(error) || 'Unknown error';
-    console.error('Functions invoke error:', errorMsg);
+    errorMsg = errorMsg || error.constructor?.name || 'Unknown error';
     throw new Error(`Edge Function: ${errorMsg}`);
   }
 
   if (!data) throw new Error('Edge Function returned null data');
-
-  console.log('AI response:', JSON.stringify(data));
-
   if (data.error) throw new Error(data.error);
 
   const rarity = getRarityFromCar(data.make ?? '', data.horsepower ?? 0);

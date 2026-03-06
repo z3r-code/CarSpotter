@@ -19,6 +19,34 @@ import {
 } from '../../services/CarRecognitionService';
 import { ScanResult } from '../../types/car.types';
 
+/**
+ * Pure-JS base64 -> Uint8Array, no atob needed.
+ * Works reliably in Hermes (React Native engine).
+ */
+function base64ToUint8Array(base64: string): Uint8Array {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const lookup = new Uint8Array(256);
+  for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
+
+  // Remove padding
+  const b64 = base64.replace(/=+$/, '');
+  const len = b64.length;
+  let bufLen = Math.floor(len * 0.75);
+  const bytes = new Uint8Array(bufLen);
+  let p = 0;
+
+  for (let i = 0; i < len; i += 4) {
+    const e1 = lookup[b64.charCodeAt(i)];
+    const e2 = lookup[b64.charCodeAt(i + 1)];
+    const e3 = lookup[b64.charCodeAt(i + 2)] ?? 0;
+    const e4 = lookup[b64.charCodeAt(i + 3)] ?? 0;
+    if (p < bufLen) bytes[p++] = (e1 << 2) | (e2 >> 4);
+    if (p < bufLen) bytes[p++] = ((e2 & 0xf) << 4) | (e3 >> 2);
+    if (p < bufLen) bytes[p++] = ((e3 & 0x3) << 6) | e4;
+  }
+  return bytes;
+}
+
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [isScanning, setIsScanning] = useState(false);
@@ -60,43 +88,31 @@ export default function ScannerScreen() {
     setDebugError(null);
 
     try {
-      // STEP 1
-      console.log('STEP 1: getUser');
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
-      console.log('STEP 1 OK: user', user.id);
 
-      // STEP 2
-      console.log('STEP 2: checkQuota');
-      const quota = await checkScanQuota(user.id);
+      const quota = await checkScanQuota(user.id).catch(() => ({ scansToday: 0, canScan: true }));
       setScansToday(quota.scansToday);
       if (!quota.canScan) {
         setScanError('quota_exceeded');
         setIsScanning(false);
         return;
       }
-      console.log('STEP 2 OK: scansToday', quota.scansToday);
 
-      // STEP 3
-      console.log('STEP 3: takePicture');
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.6 });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
       if (!photo) throw new Error('takePictureAsync returned null');
-      console.log('STEP 3 OK: photo uri', photo.uri);
 
-      // STEP 4
-      console.log('STEP 4: readAsStringAsync');
+      // Read as base64 once — reused for both AI and upload
       const base64 = await FileSystem.readAsStringAsync(photo.uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      console.log('STEP 4 OK: base64 length', base64.length);
 
       let latitude: number | null = null;
       let longitude: number | null = null;
       let photoUrl: string | null = null;
 
-      // STEP 5
-      console.log('STEP 5: Promise.all (GPS + Upload + AI)');
       const [, , car] = await Promise.all([
+        // GPS
         (async () => {
           try {
             const { status } = await Location.requestForegroundPermissionsAsync();
@@ -106,20 +122,20 @@ export default function ScannerScreen() {
               });
               latitude = loc.coords.latitude;
               longitude = loc.coords.longitude;
-              console.log('GPS OK:', latitude, longitude);
             }
           } catch (e) {
             console.log('GPS error:', e);
           }
         })(),
+
+        // Upload photo using pure-JS base64 decode (reliable on Hermes)
         (async () => {
           try {
             const fileName = `${user.id}_${Date.now()}.jpg`;
-            const response = await fetch(photo.uri);
-            const blob = await response.blob();
+            const uint8 = base64ToUint8Array(base64);
             const { error: uploadError } = await supabase.storage
               .from('spot-photos')
-              .upload(fileName, blob, { contentType: 'image/jpeg' });
+              .upload(fileName, uint8, { contentType: 'image/jpeg' });
             if (!uploadError) {
               const { data: { publicUrl } } = supabase.storage
                 .from('spot-photos')
@@ -133,12 +149,11 @@ export default function ScannerScreen() {
             console.log('Upload failed:', e);
           }
         })(),
+
+        // AI recognition
         recognizeCar(base64),
       ]);
-      console.log('STEP 5 OK: car', JSON.stringify(car));
 
-      // STEP 6
-      console.log('STEP 6: setScanResult + insert');
       setScanResult({ ...car, photo_url: photoUrl });
       setScansToday((prev) => prev + 1);
 
@@ -156,28 +171,17 @@ export default function ScannerScreen() {
       });
       if (error) console.log('Insert error:', error.message);
       else setSaved(true);
-      console.log('STEP 6 OK');
 
     } catch (err) {
       let msg = '';
-      if (err instanceof Error) {
-        msg = err.message || err.toString();
-      } else if (typeof err === 'string') {
-        msg = err;
-      } else {
-        msg = JSON.stringify(err);
-      }
-      if (!msg || msg === 'Error') msg = 'Unknown error (check metro logs)';
+      if (err instanceof Error) msg = err.message || err.toString();
+      else if (typeof err === 'string') msg = err;
+      else msg = JSON.stringify(err);
+      if (!msg || msg === 'Error') msg = 'Unknown error';
 
-      console.error('SCAN FAILED at msg:', msg);
-      console.error('SCAN FAILED raw err:', err);
+      console.error('Scan error:', msg);
       setDebugError(msg);
-
-      if (msg.includes('no_car_detected')) {
-        setScanError('no_car');
-      } else {
-        setScanError('generic');
-      }
+      setScanError(msg.includes('no_car_detected') ? 'no_car' : 'generic');
     } finally {
       setIsScanning(false);
     }
@@ -202,20 +206,33 @@ export default function ScannerScreen() {
 
   const scansLeft = MAX_FREE_SCANS_PER_DAY - scansToday;
 
+  // ── Scan Result Screen ───────────────────────────────────
   if (scanResult) {
     return (
       <ScrollView contentContainerStyle={styles.resultContainer}>
         <Text style={styles.successText}>SPOT REUSSI !</Text>
-        {scanResult.photo_url ? (
-          <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
-        ) : (
-          <View style={styles.resultPhotoPlaceholder}>
-            <Text style={{ color: '#444', fontSize: 40 }}>📷</Text>
-          </View>
-        )}
-        <View style={[styles.rarityBadge, { backgroundColor: getRarityColor(scanResult.rarity) }]}>
-          <Text style={styles.rarityText}>{scanResult.rarity.toUpperCase()}</Text>
+
+        {/* Photo with rarity color border */}
+        <View style={[styles.photoWrapper, { borderColor: getRarityColor(scanResult.rarity) }]}>
+          {scanResult.photo_url ? (
+            <Image
+              source={{ uri: scanResult.photo_url }}
+              style={styles.resultPhoto}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.resultPhotoPlaceholder}>
+              <Text style={{ color: '#444', fontSize: 40 }}>No photo</Text>
+            </View>
+          )}
         </View>
+
+        <View style={[styles.rarityBadge, { backgroundColor: getRarityColor(scanResult.rarity) + '33', borderColor: getRarityColor(scanResult.rarity), borderWidth: 1 }]}>
+          <Text style={[styles.rarityText, { color: getRarityColor(scanResult.rarity) }]}>
+            {scanResult.rarity.toUpperCase()}
+          </Text>
+        </View>
+
         <View style={styles.card}>
           <Text style={styles.carTitle}>
             {scanResult.make}{scanResult.year ? ` (${scanResult.year})` : ''}
@@ -235,11 +252,13 @@ export default function ScannerScreen() {
             <Text style={styles.specValue}>{scanResult.confidence}%</Text>
           </View>
         </View>
+
         {saved && (
           <View style={styles.savedBanner}>
             <Text style={styles.savedText}>Ajoute a ton Garage !</Text>
           </View>
         )}
+
         <TouchableOpacity style={styles.button} onPress={resetScan}>
           <Text style={styles.buttonText}>Scanner une autre voiture</Text>
         </TouchableOpacity>
@@ -247,10 +266,12 @@ export default function ScannerScreen() {
     );
   }
 
+  // ── Camera Screen ────────────────────────────────────────
   return (
     <View style={styles.container}>
       <CameraView style={StyleSheet.absoluteFillObject} facing="back" ref={cameraRef} />
 
+      {/* Viewfinder corners */}
       <View style={styles.viewfinder} pointerEvents="none">
         <View style={styles.cornerTL} />
         <View style={styles.cornerTR} />
@@ -258,6 +279,7 @@ export default function ScannerScreen() {
         <View style={styles.cornerBR} />
       </View>
 
+      {/* Quota badge */}
       <View style={styles.quotaBanner} pointerEvents="none">
         <Text style={styles.quotaText}>
           {scansLeft > 0
@@ -270,7 +292,7 @@ export default function ScannerScreen() {
         <View style={styles.overlay}>
           <Text style={styles.errorTitle}>Limite atteinte</Text>
           <Text style={styles.errorSubtitle}>
-            {`${MAX_FREE_SCANS_PER_DAY} scans gratuits utilises.\nReviens demain !`}
+            {`${MAX_FREE_SCANS_PER_DAY} scans utilises aujourd'hui.\nReviens demain !`}
           </Text>
           <TouchableOpacity style={styles.premiumButton}>
             <Text style={styles.premiumButtonText}>Passer Premium</Text>
@@ -348,12 +370,14 @@ const styles = StyleSheet.create({
   premiumButtonText: { fontSize: 17, fontWeight: 'bold', color: '#000' },
   ghostButton: { paddingVertical: 10 },
   ghostButtonText: { color: '#666', fontSize: 14 },
+  // Result screen
   resultContainer: { flexGrow: 1, backgroundColor: '#000', alignItems: 'center', padding: 24, paddingTop: 80 },
-  successText: { color: '#00ff00', fontSize: 28, fontWeight: 'bold', marginBottom: 16 },
-  resultPhoto: { width: '100%', height: 200, borderRadius: 16, marginBottom: 16 },
-  resultPhotoPlaceholder: { width: '100%', height: 200, borderRadius: 16, backgroundColor: '#111', marginBottom: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#222' },
+  successText: { color: '#00ff00', fontSize: 28, fontWeight: 'bold', marginBottom: 20 },
+  photoWrapper: { width: '100%', borderRadius: 20, overflow: 'hidden', borderWidth: 3, marginBottom: 16 },
+  resultPhoto: { width: '100%', height: 220 },
+  resultPhotoPlaceholder: { width: '100%', height: 220, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center' },
   rarityBadge: { paddingHorizontal: 20, paddingVertical: 6, borderRadius: 20, marginBottom: 20 },
-  rarityText: { color: 'white', fontWeight: 'bold', fontSize: 13, letterSpacing: 2 },
+  rarityText: { fontWeight: 'bold', fontSize: 13, letterSpacing: 2 },
   card: { backgroundColor: '#111', borderRadius: 20, padding: 24, width: '100%', borderWidth: 1, borderColor: '#222', marginBottom: 20 },
   carTitle: { color: '#aaa', fontSize: 18, fontWeight: '600' },
   carModel: { color: 'white', fontSize: 38, fontWeight: 'bold', marginBottom: 16 },
