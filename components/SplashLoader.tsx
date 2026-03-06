@@ -12,55 +12,41 @@ import {
 const { width } = Dimensions.get('window');
 const BAR_WIDTH = width - 64;
 
-/**
- * 5 themed backgrounds loaded automatically from Unsplash CDN.
- * No manual assets needed. If a URL fails, fallbackBg color is shown instead.
- * To use local assets: swap uri with require('../assets/splash/porsche.jpg')
- */
+// Single verified background image (Lamborghini gris - Reinhart Julian on Unsplash)
+// Preloaded in _layout.tsx via Image.prefetch() before this component mounts
+export const SPLASH_IMAGE_URI =
+  'https://images.unsplash.com/photo-VsXHzSdwuik?auto=format&fit=crop&w=1080&q=90';
+
+// 5 brand overlays - same photo, different accent color + tagline each launch
 const THEMES = [
   {
     id: 'porsche',
     brand: 'PORSCHE',
     tagline: 'Le frisson de la performance',
-    // Verified: close-up Porsche emblem on car hood
-    uri: 'https://images.unsplash.com/photo-Nsa_EUj1G7o?auto=format&fit=crop&w=1080&q=85',
-    fallbackBg: '#0d0905',
     accent: '#FFD700',
   },
   {
     id: 'rolls',
     brand: 'ROLLS-ROYCE',
     tagline: "L'excellence sans compromis",
-    // Rolls-Royce night palace
-    uri: 'https://images.unsplash.com/photo-1563720223809-b8d8f77cc6c0?auto=format&fit=crop&w=1080&q=85',
-    fallbackBg: '#05050f',
     accent: '#C8C8C8',
   },
   {
     id: 'ferrari',
     brand: 'FERRARI',
     tagline: 'Passion. Vitesse. Legende.',
-    // Verified: Ferrari 458 Italia on mountain road in rain
-    uri: 'https://images.unsplash.com/photo-DHqZZvFZ5h4?auto=format&fit=crop&w=1080&q=85',
-    fallbackBg: '#1a0000',
     accent: '#FF2200',
   },
   {
     id: 'lamborghini',
     brand: 'LAMBORGHINI',
     tagline: "L'art de la demesure",
-    // Lamborghini supercar
-    uri: 'https://images.unsplash.com/photo-1616455579100-2ceaa4eb2d37?auto=format&fit=crop&w=1080&q=85',
-    fallbackBg: '#0f0800',
     accent: '#FF8C00',
   },
   {
     id: 'bugatti',
     brand: 'BUGATTI',
     tagline: 'La perfection en mouvement',
-    // Bugatti showroom
-    uri: 'https://images.unsplash.com/photo-1544636331-e26879cd4d9b?auto=format&fit=crop&w=1080&q=85',
-    fallbackBg: '#00040f',
     accent: '#00BFFF',
   },
 ];
@@ -84,7 +70,7 @@ export default function SplashLoader({ isReady, onComplete }: Props) {
     return () => barProgress.removeListener(id);
   }, [barProgress]);
 
-  // Stage 1: fake loading 0 -> 78%
+  // Stage 1: animate 0 -> 78% while auth loads
   useEffect(() => {
     Animated.timing(barProgress, {
       toValue: 0.78,
@@ -122,31 +108,35 @@ export default function SplashLoader({ isReady, onComplete }: Props) {
   return (
     <Animated.View style={[styles.root, { opacity: fadeAnim }]}>
       <ImageBackground
-        source={{ uri: theme.uri }}
+        source={{ uri: SPLASH_IMAGE_URI }}
         style={styles.bg}
         resizeMode="cover"
-        imageStyle={{ backgroundColor: theme.fallbackBg }}
+        // Dark fallback shown while image loads or if network unavailable
+        imageStyle={styles.bgImage}
       >
-        <View style={styles.overlay} />
+        {/* Gradient-like dark overlay */}
+        <View style={styles.overlayTop} />
+        <View style={styles.overlayBottom} />
+        <View style={[styles.overlaySolid, { opacity: 0.45 }]} />
 
-        {/* App name */}
+        {/* App name top */}
         <View style={styles.topSection}>
           <Text style={styles.appNameTop}>CAR</Text>
           <Text style={[styles.appNameBottom, { color: theme.accent }]}>SPOTTER</Text>
           <Text style={styles.appTagline}>Spot. Collect. Dominate.</Text>
         </View>
 
-        {/* Brand watermark */}
+        {/* Brand center watermark */}
         <View style={styles.centerSection} pointerEvents="none">
-          <Text style={[styles.brandWatermark, { color: theme.accent + '18' }]}>
+          <Text style={[styles.brandWatermark, { color: theme.accent + '20' }]}>
             {theme.brand}
           </Text>
-          <Text style={[styles.brandTagline, { color: theme.accent + 'aa' }]}>
+          <Text style={[styles.brandTagline, { color: theme.accent + 'cc' }]}>
             {theme.tagline}
           </Text>
         </View>
 
-        {/* Loading bar */}
+        {/* Loading bar bottom */}
         <View style={styles.bottomSection}>
           <View style={styles.barTrack}>
             <Animated.View
@@ -170,7 +160,16 @@ export default function SplashLoader({ isReady, onComplete }: Props) {
 const styles = StyleSheet.create({
   root: { ...StyleSheet.absoluteFillObject, zIndex: 999 },
   bg: { flex: 1, justifyContent: 'space-between' },
-  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.62)' },
+  bgImage: { backgroundColor: '#0a0a0a' },
+  // Layered overlay to darken top/bottom more than center
+  overlaySolid: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
+  overlayTop: {
+    ...StyleSheet.absoluteFillObject,
+    background: 'transparent',
+  },
+  overlayBottom: {
+    ...StyleSheet.absoluteFillObject,
+  },
   topSection: { paddingTop: 80, paddingHorizontal: 32, alignItems: 'center' },
   appNameTop: {
     fontSize: 52, fontWeight: '900', color: '#ffffff',
@@ -190,16 +189,14 @@ const styles = StyleSheet.create({
   bottomSection: { paddingBottom: 64, paddingHorizontal: 32, alignItems: 'center', gap: 10 },
   barTrack: {
     width: BAR_WIDTH, height: 3,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.15)',
     borderRadius: 3, overflow: 'visible', position: 'relative',
   },
   barFill: { height: '100%', borderRadius: 3 },
   barGlow: {
-    position: 'absolute', top: -3,
-    width: 8, height: 8, borderRadius: 4,
-    shadowOpacity: 1, shadowRadius: 6,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 6, marginLeft: -4,
+    position: 'absolute', top: -3, width: 8, height: 8, borderRadius: 4,
+    shadowOpacity: 1, shadowRadius: 8, shadowOffset: { width: 0, height: 0 },
+    elevation: 8, marginLeft: -4,
   },
   percentText: { fontSize: 28, fontWeight: 'bold', letterSpacing: 2, marginTop: 14 },
   loadingLabel: {
