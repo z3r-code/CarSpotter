@@ -1,4 +1,4 @@
-export type RarityLevel = 'commun' | 'rare' | 'épique' | 'légendaire' | 'platine';
+export type RarityLevel = 'commun' | 'rare' | 'epique' | 'legendaire' | 'platine';
 
 export interface CarIdentification {
   make: string;

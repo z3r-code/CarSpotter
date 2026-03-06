@@ -7,8 +7,8 @@ function getRarityFromCar(make: string, horsepower: number): RarityLevel {
   const m = make.toLowerCase();
   const hypercarBrands = ['bugatti', 'koenigsegg', 'pagani', 'rimac', 'hennessey'];
   if (hypercarBrands.some((b) => m.includes(b)) || horsepower >= 900) return 'platine';
-  if (horsepower >= 550) return 'l\u00e9gendaire';
-  if (horsepower >= 300) return '\u00e9pique';
+  if (horsepower >= 550) return 'legendaire';
+  if (horsepower >= 300) return 'epique';
   if (horsepower >= 130) return 'rare';
   return 'commun';
 }
@@ -37,26 +37,27 @@ export async function recognizeCar(base64Image: string): Promise<CarIdentificati
   });
 
   if (error) {
-    // Supabase FunctionsHttpError: extraire le message de toutes les fa\u00e7ons possibles
-    const msg =
-      error.message ||
+    // FunctionsHttpError stores the real info in error.context (the Response object)
+    let errorMsg = error.message || '';
+    try {
       // @ts-ignore
-      error.context?.message ||
-      (error instanceof Error ? error.toString() : JSON.stringify(error)) ||
-      'Unknown edge function error';
-    console.error('\ud83d\udd34 invoke error full object:', JSON.stringify(error));
-    throw new Error(`Edge Function error: ${msg}`);
+      const ctx = error.context;
+      if (ctx && typeof ctx.text === 'function') {
+        const body = await ctx.text();
+        errorMsg = `HTTP ${ctx.status ?? '?'}: ${body}`;
+      }
+    } catch (_) {}
+
+    errorMsg = errorMsg || error.constructor?.name || JSON.stringify(error) || 'Unknown error';
+    console.error('Functions invoke error:', errorMsg);
+    throw new Error(`Edge Function: ${errorMsg}`);
   }
 
-  if (!data) {
-    throw new Error('Edge Function returned null data');
-  }
+  if (!data) throw new Error('Edge Function returned null data');
 
-  console.log('\ud83d\udfe2 AI response:', JSON.stringify(data));
+  console.log('AI response:', JSON.stringify(data));
 
-  if (data.error) {
-    throw new Error(data.error);
-  }
+  if (data.error) throw new Error(data.error);
 
   const rarity = getRarityFromCar(data.make ?? '', data.horsepower ?? 0);
 
