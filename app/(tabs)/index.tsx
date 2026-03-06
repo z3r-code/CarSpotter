@@ -19,15 +19,6 @@ import {
 } from '../../services/CarRecognitionService';
 import { ScanResult } from '../../types/car.types';
 
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [isScanning, setIsScanning] = useState(false);
@@ -53,9 +44,9 @@ export default function ScannerScreen() {
   if (!permission.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>On a besoin de la camera pour spotter !</Text>
+        <Text style={styles.text}>Camera permission needed</Text>
         <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Autoriser la camera</Text>
+          <Text style={styles.buttonText}>Allow Camera</Text>
         </TouchableOpacity>
       </View>
     );
@@ -69,9 +60,14 @@ export default function ScannerScreen() {
     setDebugError(null);
 
     try {
+      // STEP 1
+      console.log('STEP 1: getUser');
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Non authentifie');
+      if (!user) throw new Error('Not authenticated');
+      console.log('STEP 1 OK: user', user.id);
 
+      // STEP 2
+      console.log('STEP 2: checkQuota');
       const quota = await checkScanQuota(user.id);
       setScansToday(quota.scansToday);
       if (!quota.canScan) {
@@ -79,18 +75,27 @@ export default function ScannerScreen() {
         setIsScanning(false);
         return;
       }
+      console.log('STEP 2 OK: scansToday', quota.scansToday);
 
+      // STEP 3
+      console.log('STEP 3: takePicture');
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.6 });
-      if (!photo) throw new Error('Impossible de prendre la photo');
+      if (!photo) throw new Error('takePictureAsync returned null');
+      console.log('STEP 3 OK: photo uri', photo.uri);
 
+      // STEP 4
+      console.log('STEP 4: readAsStringAsync');
       const base64 = await FileSystem.readAsStringAsync(photo.uri, {
-        encoding: 'base64' as never,
+        encoding: FileSystem.EncodingType.Base64,
       });
+      console.log('STEP 4 OK: base64 length', base64.length);
 
       let latitude: number | null = null;
       let longitude: number | null = null;
       let photoUrl: string | null = null;
 
+      // STEP 5
+      console.log('STEP 5: Promise.all (GPS + Upload + AI)');
       const [, , car] = await Promise.all([
         (async () => {
           try {
@@ -101,6 +106,7 @@ export default function ScannerScreen() {
               });
               latitude = loc.coords.latitude;
               longitude = loc.coords.longitude;
+              console.log('GPS OK:', latitude, longitude);
             }
           } catch (e) {
             console.log('GPS error:', e);
@@ -108,16 +114,20 @@ export default function ScannerScreen() {
         })(),
         (async () => {
           try {
-            const arrayBuffer = base64ToArrayBuffer(base64);
             const fileName = `${user.id}_${Date.now()}.jpg`;
+            const response = await fetch(photo.uri);
+            const blob = await response.blob();
             const { error: uploadError } = await supabase.storage
               .from('spot-photos')
-              .upload(fileName, arrayBuffer, { contentType: 'image/jpeg' });
+              .upload(fileName, blob, { contentType: 'image/jpeg' });
             if (!uploadError) {
               const { data: { publicUrl } } = supabase.storage
                 .from('spot-photos')
                 .getPublicUrl(fileName);
               photoUrl = publicUrl;
+              console.log('Upload OK:', photoUrl);
+            } else {
+              console.log('Upload error:', uploadError.message);
             }
           } catch (e) {
             console.log('Upload failed:', e);
@@ -125,7 +135,10 @@ export default function ScannerScreen() {
         })(),
         recognizeCar(base64),
       ]);
+      console.log('STEP 5 OK: car', JSON.stringify(car));
 
+      // STEP 6
+      console.log('STEP 6: setScanResult + insert');
       setScanResult({ ...car, photo_url: photoUrl });
       setScansToday((prev) => prev + 1);
 
@@ -141,8 +154,10 @@ export default function ScannerScreen() {
         longitude,
         photo_url: photoUrl,
       });
-      if (error) console.log('Supabase insert error:', error.message);
+      if (error) console.log('Insert error:', error.message);
       else setSaved(true);
+      console.log('STEP 6 OK');
+
     } catch (err) {
       let msg = '';
       if (err instanceof Error) {
@@ -152,9 +167,10 @@ export default function ScannerScreen() {
       } else {
         msg = JSON.stringify(err);
       }
-      if (!msg || msg === 'Error') msg = 'Erreur inconnue - voir logs Supabase';
+      if (!msg || msg === 'Error') msg = 'Unknown error (check metro logs)';
 
-      console.error('Scan error:', msg);
+      console.error('SCAN FAILED at msg:', msg);
+      console.error('SCAN FAILED raw err:', err);
       setDebugError(msg);
 
       if (msg.includes('no_car_detected')) {
@@ -246,7 +262,7 @@ export default function ScannerScreen() {
         <Text style={styles.quotaText}>
           {scansLeft > 0
             ? `${scansLeft} scan${scansLeft > 1 ? 's' : ''} gratuit${scansLeft > 1 ? 's' : ''} restant${scansLeft > 1 ? 's' : ''}`
-            : 'Limite atteinte aujourd hui'}
+            : 'Limite atteinte'}
         </Text>
       </View>
 
@@ -254,7 +270,7 @@ export default function ScannerScreen() {
         <View style={styles.overlay}>
           <Text style={styles.errorTitle}>Limite atteinte</Text>
           <Text style={styles.errorSubtitle}>
-            {`Tu as utilise tes ${MAX_FREE_SCANS_PER_DAY} scans gratuits du jour.\nReviens demain ou passe Premium !`}
+            {`${MAX_FREE_SCANS_PER_DAY} scans gratuits utilises.\nReviens demain !`}
           </Text>
           <TouchableOpacity style={styles.premiumButton}>
             <Text style={styles.premiumButtonText}>Passer Premium</Text>
