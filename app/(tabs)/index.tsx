@@ -35,14 +35,15 @@ export default function ScannerScreen() {
   const [saved, setSaved] = useState(false);
   const [scansToday, setScansToday] = useState(0);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [debugError, setDebugError] = useState<string | null>(null);
   const cameraRef = useRef<CameraView | null>(null);
 
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { scansToday: count } = await checkScanQuota(user.id).catch(() => ({ scansToday: 0, canScan: true }));
-        setScansToday(count);
+        const quota = await checkScanQuota(user.id).catch(() => ({ scansToday: 0, canScan: true }));
+        setScansToday(quota.scansToday);
       }
     })();
   }, []);
@@ -65,11 +66,10 @@ export default function ScannerScreen() {
     setIsScanning(true);
     setSaved(false);
     setScanError(null);
+    setDebugError(null);
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Non authentifié');
 
       const quota = await checkScanQuota(user.id);
@@ -114,9 +114,9 @@ export default function ScannerScreen() {
               .from('spot-photos')
               .upload(fileName, arrayBuffer, { contentType: 'image/jpeg' });
             if (!uploadError) {
-              const {
-                data: { publicUrl },
-              } = supabase.storage.from('spot-photos').getPublicUrl(fileName);
+              const { data: { publicUrl } } = supabase.storage
+                .from('spot-photos')
+                .getPublicUrl(fileName);
               photoUrl = publicUrl;
             }
           } catch (e) {
@@ -144,8 +144,14 @@ export default function ScannerScreen() {
       if (error) console.log('Supabase insert error:', error.message);
       else setSaved(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'unknown_error';
-      setScanError(msg === 'no_car_detected' ? 'no_car' : 'generic');
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('🔴 Scan error:', msg);
+      setDebugError(msg);
+      if (msg.includes('no_car_detected')) {
+        setScanError('no_car');
+      } else {
+        setScanError('generic');
+      }
     } finally {
       setIsScanning(false);
     }
@@ -155,6 +161,7 @@ export default function ScannerScreen() {
     setScanResult(null);
     setSaved(false);
     setScanError(null);
+    setDebugError(null);
   };
 
   const getRarityColor = (rarity: string) => {
@@ -174,11 +181,7 @@ export default function ScannerScreen() {
       <ScrollView contentContainerStyle={styles.resultContainer}>
         <Text style={styles.successText}>🎯 SPOT RÉUSSI !</Text>
         {scanResult.photo_url ? (
-          <Image
-            source={{ uri: scanResult.photo_url }}
-            style={styles.resultPhoto}
-            resizeMode="cover"
-          />
+          <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
         ) : (
           <View style={styles.resultPhotoPlaceholder}>
             <Text style={{ color: '#444', fontSize: 40 }}>📷</Text>
@@ -218,80 +221,88 @@ export default function ScannerScreen() {
     );
   }
 
+  // CameraView has NO children in Expo SDK 54 — use sibling Views with absolute positioning
   return (
     <View style={styles.container}>
-      <CameraView style={styles.camera} facing="back" ref={cameraRef}>
-        <View style={styles.viewfinder}>
-          <View style={styles.cornerTL} />
-          <View style={styles.cornerTR} />
-          <View style={styles.cornerBL} />
-          <View style={styles.cornerBR} />
-        </View>
+      <CameraView style={StyleSheet.absoluteFillObject} facing="back" ref={cameraRef} />
 
-        <View style={styles.quotaBanner}>
-          <Text style={styles.quotaText}>
-            {scansLeft > 0
-              ? `📸 ${scansLeft} scan${scansLeft > 1 ? 's' : ''} gratuit${scansLeft > 1 ? 's' : ''} restant${scansLeft > 1 ? 's' : ''}`
-              : '🔒 Limite atteinte aujourd\'hui'}
+      <View style={styles.viewfinder} pointerEvents="none">
+        <View style={styles.cornerTL} />
+        <View style={styles.cornerTR} />
+        <View style={styles.cornerBL} />
+        <View style={styles.cornerBR} />
+      </View>
+
+      <View style={styles.quotaBanner} pointerEvents="none">
+        <Text style={styles.quotaText}>
+          {scansLeft > 0
+            ? `📸 ${scansLeft} scan${scansLeft > 1 ? 's' : ''} gratuit${scansLeft > 1 ? 's' : ''} restant${scansLeft > 1 ? 's' : ''}`
+            : '🔒 Limite atteinte aujourd\'hui'}
+        </Text>
+      </View>
+
+      {scanError === 'quota_exceeded' && (
+        <View style={styles.overlay}>
+          <Text style={styles.errorTitle}>🔒 Limite atteinte</Text>
+          <Text style={styles.errorSubtitle}>
+            Tu as utilisé tes {MAX_FREE_SCANS_PER_DAY} scans gratuits du jour.{`\n`}Reviens demain ou passe Premium !
           </Text>
+          <TouchableOpacity style={styles.premiumButton}>
+            <Text style={styles.premiumButtonText}>🚀 Passer Premium</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.ghostButton} onPress={resetScan}>
+            <Text style={styles.ghostButtonText}>Plus tard</Text>
+          </TouchableOpacity>
         </View>
+      )}
 
-        {scanError === 'quota_exceeded' ? (
-          <View style={styles.overlay}>
-            <Text style={styles.errorTitle}>🔒 Limite atteinte</Text>
-            <Text style={styles.errorSubtitle}>
-              Tu as utilisé tes {MAX_FREE_SCANS_PER_DAY} scans gratuits du jour.{`\n`}Reviens demain ou passe Premium !
+      {scanError === 'no_car' && (
+        <View style={styles.overlay}>
+          <Text style={styles.errorTitle}>🚗 Aucune voiture détectée</Text>
+          <Text style={styles.errorSubtitle}>Réessaie avec une meilleure vue !</Text>
+          <TouchableOpacity style={styles.button} onPress={resetScan}>
+            <Text style={styles.buttonText}>Réessayer</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {scanError === 'generic' && (
+        <View style={styles.overlay}>
+          <Text style={styles.errorTitle}>❌ Erreur</Text>
+          <Text style={styles.errorSubtitle}>{debugError ?? 'Erreur inconnue'}</Text>
+          <TouchableOpacity style={styles.button} onPress={resetScan}>
+            <Text style={styles.buttonText}>Réessayer</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {isScanning && !scanError && (
+        <View style={styles.overlay}>
+          <ActivityIndicator size="large" color="#00ff00" />
+          <Text style={styles.scanningText}>Analyse IA en cours...</Text>
+        </View>
+      )}
+
+      {!isScanning && !scanError && (
+        <View style={styles.bottomBar}>
+          <Text style={styles.hint}>Centre la voiture dans le cadre</Text>
+          <TouchableOpacity
+            style={[styles.scanButton, scansLeft <= 0 && styles.scanButtonDisabled]}
+            onPress={handleScan}
+            disabled={scansLeft <= 0}
+          >
+            <Text style={[styles.scanButtonText, scansLeft <= 0 && { color: '#666' }]}>
+              {scansLeft <= 0 ? '🔒 BLOQUÉ' : '📸 SCANNER'}
             </Text>
-            <TouchableOpacity style={styles.premiumButton}>
-              <Text style={styles.premiumButtonText}>🚀 Passer Premium</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.ghostButton} onPress={resetScan}>
-              <Text style={styles.ghostButtonText}>Plus tard</Text>
-            </TouchableOpacity>
-          </View>
-        ) : scanError === 'no_car' ? (
-          <View style={styles.overlay}>
-            <Text style={styles.errorTitle}>🚗 Aucune voiture détectée</Text>
-            <Text style={styles.errorSubtitle}>Réessaie avec une meilleure vue !</Text>
-            <TouchableOpacity style={styles.button} onPress={resetScan}>
-              <Text style={styles.buttonText}>Réessayer</Text>
-            </TouchableOpacity>
-          </View>
-        ) : scanError === 'generic' ? (
-          <View style={styles.overlay}>
-            <Text style={styles.errorTitle}>❌ Erreur</Text>
-            <Text style={styles.errorSubtitle}>Une erreur est survenue. Vérifie ta connexion.</Text>
-            <TouchableOpacity style={styles.button} onPress={resetScan}>
-              <Text style={styles.buttonText}>Réessayer</Text>
-            </TouchableOpacity>
-          </View>
-        ) : isScanning ? (
-          <View style={styles.overlay}>
-            <ActivityIndicator size="large" color="#00ff00" />
-            <Text style={styles.scanningText}>Analyse IA en cours...</Text>
-          </View>
-        ) : (
-          <View style={styles.bottomBar}>
-            <Text style={styles.hint}>Centre la voiture dans le cadre</Text>
-            <TouchableOpacity
-              style={[styles.scanButton, scansLeft <= 0 && styles.scanButtonDisabled]}
-              onPress={handleScan}
-              disabled={scansLeft <= 0}
-            >
-              <Text style={[styles.scanButtonText, scansLeft <= 0 && { color: '#666' }]}>
-                {scansLeft <= 0 ? '🔒 BLOQUÉ' : '📸 SCANNER'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </CameraView>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
-  camera: { flex: 1, width: '100%' },
+  container: { flex: 1, backgroundColor: '#000' },
   viewfinder: { position: 'absolute', top: '25%', left: '10%', right: '10%', bottom: '30%' },
   cornerTL: { position: 'absolute', top: 0, left: 0, width: 30, height: 30, borderTopWidth: 3, borderLeftWidth: 3, borderColor: '#00ff00' },
   cornerTR: { position: 'absolute', top: 0, right: 0, width: 30, height: 30, borderTopWidth: 3, borderRightWidth: 3, borderColor: '#00ff00' },
@@ -304,10 +315,10 @@ const styles = StyleSheet.create({
   scanButton: { backgroundColor: '#00ff00', paddingVertical: 16, paddingHorizontal: 50, borderRadius: 30 },
   scanButtonDisabled: { backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333' },
   scanButtonText: { fontSize: 20, fontWeight: 'bold', color: '#000' },
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.82)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.82)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   scanningText: { color: '#00ff00', fontSize: 20, fontWeight: 'bold', marginTop: 20 },
   errorTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 12 },
-  errorSubtitle: { color: '#aaa', fontSize: 15, textAlign: 'center', marginBottom: 28, lineHeight: 22 },
+  errorSubtitle: { color: '#aaa', fontSize: 13, textAlign: 'center', marginBottom: 28, lineHeight: 20, paddingHorizontal: 10 },
   premiumButton: { backgroundColor: '#FFD700', paddingVertical: 15, paddingHorizontal: 44, borderRadius: 30, marginBottom: 14 },
   premiumButtonText: { fontSize: 17, fontWeight: 'bold', color: '#000' },
   ghostButton: { paddingVertical: 10 },
