@@ -1,9 +1,23 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
-import { useRef, useState } from 'react';
-import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { supabase } from '../../supabase';
+import {
+  MAX_FREE_SCANS_PER_DAY,
+  checkScanQuota,
+  recognizeCar,
+} from '../../services/CarRecognitionService';
+import { ScanResult } from '../../types/car.types';
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binaryString = atob(base64);
@@ -17,9 +31,21 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [isScanning, setIsScanning] = useState(false);
-  const [scanResult, setScanResult] = useState<any>(null);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [saved, setSaved] = useState(false);
-  const cameraRef = useRef<any>(null);
+  const [scansToday, setScansToday] = useState(0);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const cameraRef = useRef<CameraView | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { scansToday: count } = await checkScanQuota(user.id).catch(() => ({ scansToday: 0, canScan: true }));
+        setScansToday(count);
+      }
+    })();
+  }, []);
 
   if (!permission) return <View />;
 
@@ -38,80 +64,98 @@ export default function ScannerScreen() {
     if (!cameraRef.current) return;
     setIsScanning(true);
     setSaved(false);
+    setScanError(null);
 
-    const photo = await cameraRef.current.takePictureAsync({ quality: 0.6 });
-    const { data: { user } } = await supabase.auth.getUser();
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error('Non authentifié');
 
-    let latitude: number | null = null;
-    let longitude: number | null = null;
-    let photoUrl: string | null = null;
+      const quota = await checkScanQuota(user.id);
+      setScansToday(quota.scansToday);
+      if (!quota.canScan) {
+        setScanError('quota_exceeded');
+        setIsScanning(false);
+        return;
+      }
 
-    await Promise.all([
-      (async () => {
-        try {
-          const { status } = await Location.requestForegroundPermissionsAsync();
-          if (status === 'granted') {
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            latitude = loc.coords.latitude;
-            longitude = loc.coords.longitude;
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.6 });
+      if (!photo) throw new Error('Impossible de prendre la photo');
+
+      const base64 = await FileSystem.readAsStringAsync(photo.uri, {
+        encoding: 'base64' as never,
+      });
+
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      let photoUrl: string | null = null;
+
+      const [, , car] = await Promise.all([
+        (async () => {
+          try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status === 'granted') {
+              const loc = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Balanced,
+              });
+              latitude = loc.coords.latitude;
+              longitude = loc.coords.longitude;
+            }
+          } catch (e) {
+            console.log('GPS error:', e);
           }
-        } catch (e) { console.log('GPS error:', e); }
-      })(),
-
-      (async () => {
-        if (!user) return;
-        try {
-          const base64 = await FileSystem.readAsStringAsync(photo.uri, {
-            encoding: 'base64' as any,
-          });
-          const arrayBuffer = base64ToArrayBuffer(base64);
-          const fileName = `${user.id}_${Date.now()}.jpg`;
-          const { error: uploadError } = await supabase.storage
-            .from('spot-photos')
-            .upload(fileName, arrayBuffer, { contentType: 'image/jpeg' });
-          if (!uploadError) {
-            const { data: { publicUrl } } = supabase.storage
+        })(),
+        (async () => {
+          try {
+            const arrayBuffer = base64ToArrayBuffer(base64);
+            const fileName = `${user.id}_${Date.now()}.jpg`;
+            const { error: uploadError } = await supabase.storage
               .from('spot-photos')
-              .getPublicUrl(fileName);
-            photoUrl = publicUrl;
-          } else {
-            console.log('Upload error:', uploadError.message);
+              .upload(fileName, arrayBuffer, { contentType: 'image/jpeg' });
+            if (!uploadError) {
+              const {
+                data: { publicUrl },
+              } = supabase.storage.from('spot-photos').getPublicUrl(fileName);
+              photoUrl = publicUrl;
+            }
+          } catch (e) {
+            console.log('Upload failed:', e);
           }
-        } catch (e) { console.log('Upload failed:', e); }
-      })(),
+        })(),
+        recognizeCar(base64),
+      ]);
 
-      new Promise(resolve => setTimeout(resolve, 2000)),
-    ]);
+      setScanResult({ ...car, photo_url: photoUrl });
+      setScansToday((prev) => prev + 1);
 
-    const fakeCar = {
-      make: 'Audi',
-      model: 'R8',
-      engine: 'V10 5.2L',
-      horsepower: 570,
-      rarity: 'épique',
-    };
-
-    setScanResult({ ...fakeCar, photo_url: photoUrl });
-    setIsScanning(false);
-
-    if (user) {
       const { error } = await supabase.from('spots').insert({
         user_id: user.id,
-        make: fakeCar.make,
-        model: fakeCar.model,
-        engine: fakeCar.engine,
-        horsepower: fakeCar.horsepower,
-        rarity: fakeCar.rarity,
+        make: car.make,
+        model: car.model,
+        year: car.year,
+        engine: car.engine,
+        horsepower: car.horsepower,
+        rarity: car.rarity,
         latitude,
         longitude,
         photo_url: photoUrl,
       });
-      if (error) console.log('Supabase error:', error.message);
+      if (error) console.log('Supabase insert error:', error.message);
       else setSaved(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown_error';
+      setScanError(msg === 'no_car_detected' ? 'no_car' : 'generic');
+    } finally {
+      setIsScanning(false);
     }
   };
 
-  const resetScan = () => { setScanResult(null); setSaved(false); };
+  const resetScan = () => {
+    setScanResult(null);
+    setSaved(false);
+    setScanError(null);
+  };
 
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
@@ -123,25 +167,30 @@ export default function ScannerScreen() {
     }
   };
 
+  const scansLeft = MAX_FREE_SCANS_PER_DAY - scansToday;
+
   if (scanResult) {
     return (
       <ScrollView contentContainerStyle={styles.resultContainer}>
         <Text style={styles.successText}>🎯 SPOT RÉUSSI !</Text>
-
         {scanResult.photo_url ? (
-          <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
+          <Image
+            source={{ uri: scanResult.photo_url }}
+            style={styles.resultPhoto}
+            resizeMode="cover"
+          />
         ) : (
           <View style={styles.resultPhotoPlaceholder}>
             <Text style={{ color: '#444', fontSize: 40 }}>📷</Text>
           </View>
         )}
-
         <View style={[styles.rarityBadge, { backgroundColor: getRarityColor(scanResult.rarity) }]}>
           <Text style={styles.rarityText}>{scanResult.rarity.toUpperCase()}</Text>
         </View>
-
         <View style={styles.card}>
-          <Text style={styles.carTitle}>{scanResult.make}</Text>
+          <Text style={styles.carTitle}>
+            {scanResult.make}{scanResult.year ? ` (${scanResult.year})` : ''}
+          </Text>
           <Text style={styles.carModel}>{scanResult.model}</Text>
           <View style={styles.divider} />
           <View style={styles.specRow}>
@@ -152,14 +201,16 @@ export default function ScannerScreen() {
             <Text style={styles.specLabel}>⚡ Puissance</Text>
             <Text style={styles.specValue}>{scanResult.horsepower} ch</Text>
           </View>
+          <View style={styles.specRow}>
+            <Text style={styles.specLabel}>🎯 Confiance IA</Text>
+            <Text style={styles.specValue}>{scanResult.confidence}%</Text>
+          </View>
         </View>
-
         {saved && (
           <View style={styles.savedBanner}>
             <Text style={styles.savedText}>✅ Ajouté à ton Garage !</Text>
           </View>
         )}
-
         <TouchableOpacity style={styles.button} onPress={resetScan}>
           <Text style={styles.buttonText}>📸 Scanner une autre voiture</Text>
         </TouchableOpacity>
@@ -176,7 +227,45 @@ export default function ScannerScreen() {
           <View style={styles.cornerBL} />
           <View style={styles.cornerBR} />
         </View>
-        {isScanning ? (
+
+        <View style={styles.quotaBanner}>
+          <Text style={styles.quotaText}>
+            {scansLeft > 0
+              ? `📸 ${scansLeft} scan${scansLeft > 1 ? 's' : ''} gratuit${scansLeft > 1 ? 's' : ''} restant${scansLeft > 1 ? 's' : ''}`
+              : '🔒 Limite atteinte aujourd\'hui'}
+          </Text>
+        </View>
+
+        {scanError === 'quota_exceeded' ? (
+          <View style={styles.overlay}>
+            <Text style={styles.errorTitle}>🔒 Limite atteinte</Text>
+            <Text style={styles.errorSubtitle}>
+              Tu as utilisé tes {MAX_FREE_SCANS_PER_DAY} scans gratuits du jour.{`\n`}Reviens demain ou passe Premium !
+            </Text>
+            <TouchableOpacity style={styles.premiumButton}>
+              <Text style={styles.premiumButtonText}>🚀 Passer Premium</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.ghostButton} onPress={resetScan}>
+              <Text style={styles.ghostButtonText}>Plus tard</Text>
+            </TouchableOpacity>
+          </View>
+        ) : scanError === 'no_car' ? (
+          <View style={styles.overlay}>
+            <Text style={styles.errorTitle}>🚗 Aucune voiture détectée</Text>
+            <Text style={styles.errorSubtitle}>Réessaie avec une meilleure vue !</Text>
+            <TouchableOpacity style={styles.button} onPress={resetScan}>
+              <Text style={styles.buttonText}>Réessayer</Text>
+            </TouchableOpacity>
+          </View>
+        ) : scanError === 'generic' ? (
+          <View style={styles.overlay}>
+            <Text style={styles.errorTitle}>❌ Erreur</Text>
+            <Text style={styles.errorSubtitle}>Une erreur est survenue. Vérifie ta connexion.</Text>
+            <TouchableOpacity style={styles.button} onPress={resetScan}>
+              <Text style={styles.buttonText}>Réessayer</Text>
+            </TouchableOpacity>
+          </View>
+        ) : isScanning ? (
           <View style={styles.overlay}>
             <ActivityIndicator size="large" color="#00ff00" />
             <Text style={styles.scanningText}>Analyse IA en cours...</Text>
@@ -184,8 +273,14 @@ export default function ScannerScreen() {
         ) : (
           <View style={styles.bottomBar}>
             <Text style={styles.hint}>Centre la voiture dans le cadre</Text>
-            <TouchableOpacity style={styles.scanButton} onPress={handleScan}>
-              <Text style={styles.scanButtonText}>📸 SCANNER</Text>
+            <TouchableOpacity
+              style={[styles.scanButton, scansLeft <= 0 && styles.scanButtonDisabled]}
+              onPress={handleScan}
+              disabled={scansLeft <= 0}
+            >
+              <Text style={[styles.scanButtonText, scansLeft <= 0 && { color: '#666' }]}>
+                {scansLeft <= 0 ? '🔒 BLOQUÉ' : '📸 SCANNER'}
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -202,12 +297,21 @@ const styles = StyleSheet.create({
   cornerTR: { position: 'absolute', top: 0, right: 0, width: 30, height: 30, borderTopWidth: 3, borderRightWidth: 3, borderColor: '#00ff00' },
   cornerBL: { position: 'absolute', bottom: 0, left: 0, width: 30, height: 30, borderBottomWidth: 3, borderLeftWidth: 3, borderColor: '#00ff00' },
   cornerBR: { position: 'absolute', bottom: 0, right: 0, width: 30, height: 30, borderBottomWidth: 3, borderRightWidth: 3, borderColor: '#00ff00' },
+  quotaBanner: { position: 'absolute', top: 60, left: 0, right: 0, alignItems: 'center' },
+  quotaText: { backgroundColor: 'rgba(0,0,0,0.65)', color: '#fff', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, fontSize: 13, fontWeight: '600', overflow: 'hidden' },
   bottomBar: { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center' },
   hint: { color: '#aaa', fontSize: 13, marginBottom: 16 },
   scanButton: { backgroundColor: '#00ff00', paddingVertical: 16, paddingHorizontal: 50, borderRadius: 30 },
+  scanButtonDisabled: { backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333' },
   scanButtonText: { fontSize: 20, fontWeight: 'bold', color: '#000' },
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.82)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   scanningText: { color: '#00ff00', fontSize: 20, fontWeight: 'bold', marginTop: 20 },
+  errorTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 12 },
+  errorSubtitle: { color: '#aaa', fontSize: 15, textAlign: 'center', marginBottom: 28, lineHeight: 22 },
+  premiumButton: { backgroundColor: '#FFD700', paddingVertical: 15, paddingHorizontal: 44, borderRadius: 30, marginBottom: 14 },
+  premiumButtonText: { fontSize: 17, fontWeight: 'bold', color: '#000' },
+  ghostButton: { paddingVertical: 10 },
+  ghostButtonText: { color: '#666', fontSize: 14 },
   resultContainer: { flexGrow: 1, backgroundColor: '#000', alignItems: 'center', padding: 24, paddingTop: 80 },
   successText: { color: '#00ff00', fontSize: 28, fontWeight: 'bold', marginBottom: 16 },
   resultPhoto: { width: '100%', height: 200, borderRadius: 16, marginBottom: 16 },
