@@ -12,10 +12,11 @@ import {
 const { width } = Dimensions.get('window');
 const BAR_WIDTH = width - 64;
 
-// Local asset — replace assets/splash/car.jpg with your photo (see README)
+// Local asset — replace assets/splash/car.jpg with your photo
 const CAR_IMAGE = require('../assets/splash/car.jpg');
 
-const ACCENT = '#FF8C00'; // Orange sport — change to match your photo mood
+// Brand identity color — cyan blue
+const ACCENT = '#00C8FF';
 
 interface Props {
   isReady: boolean;
