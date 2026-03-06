@@ -25,7 +25,17 @@ export async function checkScanQuota(
     .eq('user_id', userId)
     .gte('created_at', today.toISOString());
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Log full Supabase error to diagnose RLS / schema issues
+    console.error('checkScanQuota DB error:', {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
+    // Fail open: if quota check fails, allow the scan
+    return { canScan: true, scansToday: 0 };
+  }
 
   const scansToday = count ?? 0;
   return { canScan: scansToday < MAX_FREE_SCANS_PER_DAY, scansToday };
@@ -37,7 +47,6 @@ export async function recognizeCar(base64Image: string): Promise<CarIdentificati
   });
 
   if (error) {
-    // FunctionsHttpError stores the real info in error.context (the Response object)
     let errorMsg = error.message || '';
     try {
       // @ts-ignore
@@ -47,7 +56,6 @@ export async function recognizeCar(base64Image: string): Promise<CarIdentificati
         errorMsg = `HTTP ${ctx.status ?? '?'}: ${body}`;
       }
     } catch (_) {}
-
     errorMsg = errorMsg || error.constructor?.name || JSON.stringify(error) || 'Unknown error';
     console.error('Functions invoke error:', errorMsg);
     throw new Error(`Edge Function: ${errorMsg}`);
