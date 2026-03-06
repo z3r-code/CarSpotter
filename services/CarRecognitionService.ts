@@ -7,8 +7,8 @@ function getRarityFromCar(make: string, horsepower: number): RarityLevel {
   const m = make.toLowerCase();
   const hypercarBrands = ['bugatti', 'koenigsegg', 'pagani', 'rimac', 'hennessey'];
   if (hypercarBrands.some((b) => m.includes(b)) || horsepower >= 900) return 'platine';
-  if (horsepower >= 550) return 'légendaire';
-  if (horsepower >= 300) return 'épique';
+  if (horsepower >= 550) return 'l\u00e9gendaire';
+  if (horsepower >= 300) return '\u00e9pique';
   if (horsepower >= 130) return 'rare';
   return 'commun';
 }
@@ -28,10 +28,7 @@ export async function checkScanQuota(
   if (error) throw new Error(error.message);
 
   const scansToday = count ?? 0;
-  return {
-    canScan: scansToday < MAX_FREE_SCANS_PER_DAY,
-    scansToday,
-  };
+  return { canScan: scansToday < MAX_FREE_SCANS_PER_DAY, scansToday };
 }
 
 export async function recognizeCar(base64Image: string): Promise<CarIdentification> {
@@ -39,9 +36,26 @@ export async function recognizeCar(base64Image: string): Promise<CarIdentificati
     body: { image: base64Image },
   });
 
-  if (error) throw new Error(`Edge Function error: ${error.message}`);
-  if (!data || data.error) {
-    throw new Error(data?.error ?? 'unknown_error');
+  if (error) {
+    // Supabase FunctionsHttpError: extraire le message de toutes les fa\u00e7ons possibles
+    const msg =
+      error.message ||
+      // @ts-ignore
+      error.context?.message ||
+      (error instanceof Error ? error.toString() : JSON.stringify(error)) ||
+      'Unknown edge function error';
+    console.error('\ud83d\udd34 invoke error full object:', JSON.stringify(error));
+    throw new Error(`Edge Function error: ${msg}`);
+  }
+
+  if (!data) {
+    throw new Error('Edge Function returned null data');
+  }
+
+  console.log('\ud83d\udfe2 AI response:', JSON.stringify(data));
+
+  if (data.error) {
+    throw new Error(data.error);
   }
 
   const rarity = getRarityFromCar(data.make ?? '', data.horsepower ?? 0);

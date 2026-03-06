@@ -53,9 +53,9 @@ export default function ScannerScreen() {
   if (!permission.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>On a besoin de la caméra pour spotter !</Text>
+        <Text style={styles.text}>On a besoin de la cam\u00e9ra pour spotter !</Text>
         <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Autoriser la caméra</Text>
+          <Text style={styles.buttonText}>Autoriser la cam\u00e9ra</Text>
         </TouchableOpacity>
       </View>
     );
@@ -70,7 +70,7 @@ export default function ScannerScreen() {
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Non authentifié');
+      if (!user) throw new Error('Non authentifi\u00e9');
 
       const quota = await checkScanQuota(user.id);
       setScansToday(quota.scansToday);
@@ -144,9 +144,21 @@ export default function ScannerScreen() {
       if (error) console.log('Supabase insert error:', error.message);
       else setSaved(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('🔴 Scan error:', msg);
-      setDebugError(msg);
+      // Extraire le message de toutes les fa\u00e7ons possibles
+      let msg = '';
+      if (err instanceof Error) {
+        msg = err.message || err.toString();
+      } else if (typeof err === 'string') {
+        msg = err;
+      } else {
+        msg = JSON.stringify(err);
+      }
+
+      console.error('\ud83d\udd34 Scan error msg:', msg);
+      console.error('\ud83d\udd34 Scan error raw:', err);
+
+      setDebugError(msg || 'Erreur sans message (voir logs)');
+
       if (msg.includes('no_car_detected')) {
         setScanError('no_car');
       } else {
@@ -167,8 +179,8 @@ export default function ScannerScreen() {
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
       case 'platine': return '#00FFFF';
-      case 'légendaire': return '#FFD700';
-      case 'épique': return '#9B59B6';
+      case 'l\u00e9gendaire': return '#FFD700';
+      case '\u00e9pique': return '#9B59B6';
       case 'rare': return '#3498DB';
       default: return '#888';
     }
@@ -179,12 +191,12 @@ export default function ScannerScreen() {
   if (scanResult) {
     return (
       <ScrollView contentContainerStyle={styles.resultContainer}>
-        <Text style={styles.successText}>🎯 SPOT RÉUSSI !</Text>
+        <Text style={styles.successText}>\ud83c\udfaf SPOT R\u00c9USSI !</Text>
         {scanResult.photo_url ? (
           <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
         ) : (
           <View style={styles.resultPhotoPlaceholder}>
-            <Text style={{ color: '#444', fontSize: 40 }}>📷</Text>
+            <Text style={{ color: '#444', fontSize: 40 }}>\ud83d\udcf7</Text>
           </View>
         )}
         <View style={[styles.rarityBadge, { backgroundColor: getRarityColor(scanResult.rarity) }]}>
@@ -197,31 +209,30 @@ export default function ScannerScreen() {
           <Text style={styles.carModel}>{scanResult.model}</Text>
           <View style={styles.divider} />
           <View style={styles.specRow}>
-            <Text style={styles.specLabel}>🔧 Moteur</Text>
+            <Text style={styles.specLabel}>\ud83d\udd27 Moteur</Text>
             <Text style={styles.specValue}>{scanResult.engine}</Text>
           </View>
           <View style={styles.specRow}>
-            <Text style={styles.specLabel}>⚡ Puissance</Text>
+            <Text style={styles.specLabel}>\u26a1 Puissance</Text>
             <Text style={styles.specValue}>{scanResult.horsepower} ch</Text>
           </View>
           <View style={styles.specRow}>
-            <Text style={styles.specLabel}>🎯 Confiance IA</Text>
+            <Text style={styles.specLabel}>\ud83c\udfaf Confiance IA</Text>
             <Text style={styles.specValue}>{scanResult.confidence}%</Text>
           </View>
         </View>
         {saved && (
           <View style={styles.savedBanner}>
-            <Text style={styles.savedText}>✅ Ajouté à ton Garage !</Text>
+            <Text style={styles.savedText}>\u2705 Ajout\u00e9 \u00e0 ton Garage !</Text>
           </View>
         )}
         <TouchableOpacity style={styles.button} onPress={resetScan}>
-          <Text style={styles.buttonText}>📸 Scanner une autre voiture</Text>
+          <Text style={styles.buttonText}>\ud83d\udcf8 Scanner une autre voiture</Text>
         </TouchableOpacity>
       </ScrollView>
     );
   }
 
-  // CameraView has NO children in Expo SDK 54 — use sibling Views with absolute positioning
   return (
     <View style={styles.container}>
       <CameraView style={StyleSheet.absoluteFillObject} facing="back" ref={cameraRef} />
@@ -236,19 +247,19 @@ export default function ScannerScreen() {
       <View style={styles.quotaBanner} pointerEvents="none">
         <Text style={styles.quotaText}>
           {scansLeft > 0
-            ? `📸 ${scansLeft} scan${scansLeft > 1 ? 's' : ''} gratuit${scansLeft > 1 ? 's' : ''} restant${scansLeft > 1 ? 's' : ''}`
-            : '🔒 Limite atteinte aujourd\'hui'}
+            ? `\ud83d\udcf8 ${scansLeft} scan${scansLeft > 1 ? 's' : ''} gratuit${scansLeft > 1 ? 's' : ''} restant${scansLeft > 1 ? 's' : ''}`
+            : '\ud83d\udd12 Limite atteinte aujourd\'hui'}
         </Text>
       </View>
 
       {scanError === 'quota_exceeded' && (
         <View style={styles.overlay}>
-          <Text style={styles.errorTitle}>🔒 Limite atteinte</Text>
+          <Text style={styles.errorTitle}>\ud83d\udd12 Limite atteinte</Text>
           <Text style={styles.errorSubtitle}>
-            Tu as utilisé tes {MAX_FREE_SCANS_PER_DAY} scans gratuits du jour.{`\n`}Reviens demain ou passe Premium !
+            Tu as utilis\u00e9 tes {MAX_FREE_SCANS_PER_DAY} scans gratuits du jour.{'\n'}Reviens demain ou passe Premium !
           </Text>
           <TouchableOpacity style={styles.premiumButton}>
-            <Text style={styles.premiumButtonText}>🚀 Passer Premium</Text>
+            <Text style={styles.premiumButtonText}>\ud83d\ude80 Passer Premium</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.ghostButton} onPress={resetScan}>
             <Text style={styles.ghostButtonText}>Plus tard</Text>
@@ -258,20 +269,20 @@ export default function ScannerScreen() {
 
       {scanError === 'no_car' && (
         <View style={styles.overlay}>
-          <Text style={styles.errorTitle}>🚗 Aucune voiture détectée</Text>
-          <Text style={styles.errorSubtitle}>Réessaie avec une meilleure vue !</Text>
+          <Text style={styles.errorTitle}>\ud83d\ude97 Aucune voiture d\u00e9tect\u00e9e</Text>
+          <Text style={styles.errorSubtitle}>R\u00e9essaie avec une meilleure vue !</Text>
           <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>Réessayer</Text>
+            <Text style={styles.buttonText}>R\u00e9essayer</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {scanError === 'generic' && (
         <View style={styles.overlay}>
-          <Text style={styles.errorTitle}>❌ Erreur</Text>
-          <Text style={styles.errorSubtitle}>{debugError ?? 'Erreur inconnue'}</Text>
+          <Text style={styles.errorTitle}>\u274c Erreur</Text>
+          <Text style={styles.errorSubtitle}>{debugError}</Text>
           <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>Réessayer</Text>
+            <Text style={styles.buttonText}>R\u00e9essayer</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -292,7 +303,7 @@ export default function ScannerScreen() {
             disabled={scansLeft <= 0}
           >
             <Text style={[styles.scanButtonText, scansLeft <= 0 && { color: '#666' }]}>
-              {scansLeft <= 0 ? '🔒 BLOQUÉ' : '📸 SCANNER'}
+              {scansLeft <= 0 ? '\ud83d\udd12 BLOQU\u00c9' : '\ud83d\udcf8 SCANNER'}
             </Text>
           </TouchableOpacity>
         </View>
