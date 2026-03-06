@@ -19,21 +19,15 @@ export async function checkScanQuota(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // Use spotted_at to match the actual spots table schema
   const { count, error } = await supabase
     .from('spots')
     .select('*', { count: 'exact', head: true })
     .eq('user_id', userId)
-    .gte('created_at', today.toISOString());
+    .gte('spotted_at', today.toISOString());
 
   if (error) {
-    // Log full Supabase error to diagnose RLS / schema issues
-    console.error('checkScanQuota DB error:', {
-      message: error.message,
-      code: error.code,
-      details: error.details,
-      hint: error.hint,
-    });
-    // Fail open: if quota check fails, allow the scan
+    console.warn('checkScanQuota error (fail-open):', error.message || error.code || JSON.stringify(error));
     return { canScan: true, scansToday: 0 };
   }
 

@@ -13,16 +13,18 @@ import {
 } from 'react-native';
 import { supabase } from '../../supabase';
 
-// ── XP System ─────────────────────────────────────────────
+// Rarity values as stored in DB (no accents)
+// commun | rare | epique | legendaire | platine
+
 const XP_THRESHOLDS = [0, 10, 25, 50, 100];
-const LEVEL_NAMES = ['', 'Novice', 'Observateur', 'Chasseur', 'Expert', 'Légende'];
+const LEVEL_NAMES = ['', 'Novice', 'Observateur', 'Chasseur', 'Expert', 'Legende'];
 const LEVEL_COLORS = ['', '#888888', '#3498DB', '#9B59B6', '#FFD700', '#00FFFF'];
 
 function getXpForRarity(rarity: string): number {
   switch (rarity) {
     case 'platine': return 20;
-    case 'légendaire': return 15;
-    case 'épique': return 10;
+    case 'legendaire': return 15;
+    case 'epique': return 10;
     case 'rare': return 5;
     default: return 1;
   }
@@ -40,12 +42,12 @@ function getLevelInfo(totalXp: number) {
   const progress = isMax ? 1 : (totalXp - from) / (to - from);
   return { level, progress, nextXp: to, currentXp: totalXp, name: LEVEL_NAMES[level], color: LEVEL_COLORS[level] };
 }
-// ──────────────────────────────────────────────────────────
 
 type Spot = {
   id: string;
   make: string;
   model: string;
+  year: number | null;
   engine: string;
   horsepower: number;
   rarity: string;
@@ -62,6 +64,7 @@ export default function GarageScreen() {
   const [stats, setStats] = useState({ total: 0, legendary: 0, epic: 0 });
   const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null);
   const [levelInfo, setLevelInfo] = useState(getLevelInfo(0));
+  const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set());
 
   const fetchSpots = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -75,8 +78,8 @@ export default function GarageScreen() {
       setSpots(data);
       setStats({
         total: data.length,
-        legendary: data.filter(s => s.rarity === 'légendaire').length,
-        epic: data.filter(s => s.rarity === 'épique').length,
+        legendary: data.filter(s => s.rarity === 'legendaire').length,
+        epic: data.filter(s => s.rarity === 'epique').length,
       });
       const totalXp = data.reduce((sum, s) => sum + getXpForRarity(s.rarity), 0);
       setLevelInfo(getLevelInfo(totalXp));
@@ -91,8 +94,8 @@ export default function GarageScreen() {
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
       case 'platine': return '#00FFFF';
-      case 'légendaire': return '#FFD700';
-      case 'épique': return '#9B59B6';
+      case 'legendaire': return '#FFD700';
+      case 'epique': return '#9B59B6';
       case 'rare': return '#3498DB';
       default: return '#555';
     }
@@ -100,16 +103,48 @@ export default function GarageScreen() {
 
   const getRarityEmoji = (rarity: string) => {
     switch (rarity) {
-      case 'platine': return '💎';
-      case 'légendaire': return '👑';
-      case 'épique': return '🔥';
-      case 'rare': return '💠';
-      default: return '⚪';
+      case 'platine': return '\uD83D\uDC8E';
+      case 'legendaire': return '\uD83D\uDC51';
+      case 'epique': return '\uD83D\uDD25';
+      case 'rare': return '\uD83D\uDCA0';
+      default: return '\u26AA';
+    }
+  };
+
+  const getRarityLabel = (rarity: string) => {
+    switch (rarity) {
+      case 'platine': return 'PLATINE';
+      case 'legendaire': return 'LEGENDAIRE';
+      case 'epique': return 'EPIQUE';
+      case 'rare': return 'RARE';
+      default: return 'COMMUN';
     }
   };
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const handleImageError = (id: string) => {
+    setBrokenImages(prev => new Set(prev).add(id));
+  };
+
+  const renderThumbnail = (item: Spot) => {
+    if (item.photo_url && !brokenImages.has(item.id)) {
+      return (
+        <Image
+          source={{ uri: item.photo_url }}
+          style={styles.spotThumbnail}
+          resizeMode="cover"
+          onError={() => handleImageError(item.id)}
+        />
+      );
+    }
+    return (
+      <View style={[styles.spotThumbnail, styles.spotThumbnailEmpty]}>
+        <Text style={{ fontSize: 22 }}>{getRarityEmoji(item.rarity)}</Text>
+      </View>
+    );
   };
 
   if (loading) {
@@ -128,50 +163,55 @@ export default function GarageScreen() {
         {selectedSpot && (
           <View style={styles.modalContainer}>
             <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedSpot(null)}>
-              <Text style={styles.modalCloseText}>✕</Text>
+              <Text style={styles.modalCloseText}>X</Text>
             </TouchableOpacity>
             <ScrollView showsVerticalScrollIndicator={false}>
-              {selectedSpot.photo_url ? (
-                <Image source={{ uri: selectedSpot.photo_url }} style={styles.modalPhoto} resizeMode="cover" />
+              {selectedSpot.photo_url && !brokenImages.has(selectedSpot.id) ? (
+                <Image
+                  source={{ uri: selectedSpot.photo_url }}
+                  style={styles.modalPhoto}
+                  resizeMode="cover"
+                  onError={() => handleImageError(selectedSpot.id)}
+                />
               ) : (
                 <View style={styles.modalPhotoPlaceholder}>
-                  <Text style={{ fontSize: 60 }}>📷</Text>
+                  <Text style={{ fontSize: 60 }}>{getRarityEmoji(selectedSpot.rarity)}</Text>
                   <Text style={{ color: '#444', marginTop: 8 }}>Pas de photo</Text>
                 </View>
               )}
               <View style={styles.modalContent}>
-                <Text style={styles.modalMake}>{selectedSpot.make}</Text>
+                <Text style={styles.modalMake}>{selectedSpot.make}{selectedSpot.year ? ` (${selectedSpot.year})` : ''}</Text>
                 <Text style={styles.modalModel}>{selectedSpot.model}</Text>
                 <View style={[styles.modalBadge, { backgroundColor: getRarityColor(selectedSpot.rarity) + '33', borderColor: getRarityColor(selectedSpot.rarity), borderWidth: 1 }]}>
                   <Text style={[styles.modalBadgeText, { color: getRarityColor(selectedSpot.rarity) }]}>
-                    {getRarityEmoji(selectedSpot.rarity)} {selectedSpot.rarity.toUpperCase()}
+                    {getRarityEmoji(selectedSpot.rarity)} {getRarityLabel(selectedSpot.rarity)}
                   </Text>
                 </View>
                 <View style={styles.modalSpecs}>
                   <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>🔧 Moteur</Text>
+                    <Text style={styles.modalSpecLabel}>Moteur</Text>
                     <Text style={styles.modalSpecValue}>{selectedSpot.engine}</Text>
                   </View>
                   <View style={styles.modalDivider} />
                   <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>⚡ Puissance</Text>
+                    <Text style={styles.modalSpecLabel}>Puissance</Text>
                     <Text style={styles.modalSpecValue}>{selectedSpot.horsepower} ch</Text>
                   </View>
                   <View style={styles.modalDivider} />
                   <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>📅 Spotté</Text>
+                    <Text style={styles.modalSpecLabel}>Spotte le</Text>
                     <Text style={styles.modalSpecValue}>{formatDate(selectedSpot.spotted_at)}</Text>
                   </View>
                   <View style={styles.modalDivider} />
                   <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>⭐ XP gagné</Text>
-                    <Text style={[styles.modalSpecValue, { color: getRarityColor(selectedSpot.rarity) }]}>+{getXpForRarity(selectedSpot.rarity)} ⭐</Text>
+                    <Text style={styles.modalSpecLabel}>XP gagne</Text>
+                    <Text style={[styles.modalSpecValue, { color: getRarityColor(selectedSpot.rarity) }]}>+{getXpForRarity(selectedSpot.rarity)}</Text>
                   </View>
-                  {selectedSpot.latitude && (
+                  {selectedSpot.latitude != null && (
                     <>
                       <View style={styles.modalDivider} />
                       <View style={styles.modalSpecRow}>
-                        <Text style={styles.modalSpecLabel}>📍 Localisation</Text>
+                        <Text style={styles.modalSpecLabel}>Localisation</Text>
                         <Text style={styles.modalSpecValue}>{selectedSpot.latitude.toFixed(4)}, {selectedSpot.longitude?.toFixed(4)}</Text>
                       </View>
                     </>
@@ -183,11 +223,11 @@ export default function GarageScreen() {
         )}
       </Modal>
 
-      {/* Header avec niveau */}
+      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Text style={styles.title}>🛠️ Mon Garage</Text>
-          <Text style={styles.subtitle}>{stats.total} voiture{stats.total > 1 ? 's' : ''} spottée{stats.total > 1 ? 's' : ''}</Text>
+          <Text style={styles.title}>Mon Garage</Text>
+          <Text style={styles.subtitle}>{stats.total} voiture{stats.total > 1 ? 's' : ''} spottee{stats.total > 1 ? 's' : ''}</Text>
         </View>
         <View style={styles.headerRight}>
           <View style={[styles.levelBadge, { backgroundColor: levelInfo.color + '22', borderColor: levelInfo.color }]}>
@@ -199,7 +239,7 @@ export default function GarageScreen() {
             <View style={{ flex: Math.max(0, 1 - levelInfo.progress) }} />
           </View>
           <Text style={styles.xpText}>
-            {levelInfo.level < 5 ? `${levelInfo.currentXp}/${levelInfo.nextXp} ⭐` : 'MAX ⭐'}
+            {levelInfo.level < 5 ? `${levelInfo.currentXp}/${levelInfo.nextXp}` : 'MAX'}
           </Text>
         </View>
       </View>
@@ -212,20 +252,20 @@ export default function GarageScreen() {
         </View>
         <View style={styles.statCard}>
           <Text style={[styles.statNumber, { color: '#FFD700' }]}>{stats.legendary}</Text>
-          <Text style={styles.statLabel}>👑 Légendaires</Text>
+          <Text style={styles.statLabel}>Legendaires</Text>
         </View>
         <View style={styles.statCard}>
           <Text style={[styles.statNumber, { color: '#9B59B6' }]}>{stats.epic}</Text>
-          <Text style={styles.statLabel}>🔥 Épiques</Text>
+          <Text style={styles.statLabel}>Epiques</Text>
         </View>
       </View>
 
       {/* Liste */}
       {spots.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={styles.emptyEmoji}>🚗</Text>
+          <Text style={styles.emptyEmoji}>Car</Text>
           <Text style={styles.emptyText}>Ton garage est vide !</Text>
-          <Text style={styles.emptySubtext}>Va scanner ta première voiture</Text>
+          <Text style={styles.emptySubtext}>Va scanner ta premiere voiture</Text>
         </View>
       ) : (
         <FlatList
@@ -236,27 +276,21 @@ export default function GarageScreen() {
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.spotCard} activeOpacity={0.8} onPress={() => setSelectedSpot(item)}>
               <View style={[styles.rarityBar, { backgroundColor: getRarityColor(item.rarity) }]} />
-              {item.photo_url ? (
-                <Image source={{ uri: item.photo_url }} style={styles.spotThumbnail} resizeMode="cover" />
-              ) : (
-                <View style={[styles.spotThumbnail, styles.spotThumbnailEmpty]}>
-                  <Text style={{ fontSize: 22 }}>🚗</Text>
-                </View>
-              )}
+              {renderThumbnail(item)}
               <View style={styles.spotContent}>
                 <View style={styles.spotHeader}>
-                  <View>
+                  <View style={{ flex: 1 }}>
                     <Text style={styles.spotMake}>{item.make}</Text>
                     <Text style={styles.spotModel}>{item.model}</Text>
                   </View>
                   <View style={styles.spotRight}>
                     <Text style={styles.rarityEmoji}>{getRarityEmoji(item.rarity)}</Text>
-                    <Text style={[styles.xpBadge, { color: getRarityColor(item.rarity) }]}>+{getXpForRarity(item.rarity)}⭐</Text>
+                    <Text style={[styles.xpBadge, { color: getRarityColor(item.rarity) }]}>+{getXpForRarity(item.rarity)}</Text>
                   </View>
                 </View>
                 <View style={styles.spotFooter}>
-                  <Text style={styles.spotSpec}>⚡ {item.horsepower} ch</Text>
-                  <Text style={styles.spotSpec}>🔧 {item.engine}</Text>
+                  <Text style={styles.spotSpec}>{item.horsepower} ch</Text>
+                  <Text style={styles.spotSpec}>{item.engine}</Text>
                   <Text style={styles.spotDate}>{formatDate(item.spotted_at)}</Text>
                 </View>
               </View>
@@ -286,7 +320,7 @@ const styles = StyleSheet.create({
   statNumber: { color: '#00ff00', fontSize: 24, fontWeight: 'bold' },
   statLabel: { color: '#555', fontSize: 11, marginTop: 2, textAlign: 'center' },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyEmoji: { fontSize: 64, marginBottom: 16 },
+  emptyEmoji: { fontSize: 64, marginBottom: 16, color: 'white' },
   emptyText: { color: 'white', fontSize: 20, fontWeight: 'bold' },
   emptySubtext: { color: '#555', fontSize: 14, marginTop: 8 },
   spotCard: { flexDirection: 'row', backgroundColor: '#111', borderRadius: 14, marginBottom: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#222' },
