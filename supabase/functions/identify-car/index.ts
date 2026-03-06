@@ -18,6 +18,15 @@ const SYSTEM_PROMPT = `You are an expert automotive AI. Analyze the car in the i
 }
 If no car is clearly visible, respond with: {"error": "no_car_detected"}`;
 
+// Always return HTTP 200 — errors go in the JSON body as { error: "..." }
+// This way supabase.functions.invoke puts everything in `data`, never in `error`
+function ok(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS });
@@ -25,12 +34,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const { image } = await req.json();
-    if (!image) {
-      return new Response(JSON.stringify({ error: 'no_image_provided' }), {
-        status: 400,
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-      });
-    }
+    if (!image) return ok({ error: 'no_image_provided' });
 
     const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -59,34 +63,38 @@ Deno.serve(async (req: Request) => {
       }),
     });
 
+    const openaiText = await openaiRes.text();
+
     if (!openaiRes.ok) {
-      const errText = await openaiRes.text();
-      return new Response(JSON.stringify({ error: `openai_error: ${errText}` }), {
-        status: 500,
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-      });
+      console.error('OpenAI error:', openaiText);
+      // Parse OpenAI error for a cleaner message
+      try {
+        const parsed = JSON.parse(openaiText);
+        return ok({ error: parsed.error?.message ?? openaiText });
+      } catch {
+        return ok({ error: openaiText });
+      }
     }
 
-    const openaiData = await openaiRes.json();
-    const content = openaiData.choices?.[0]?.message?.content ?? '{"error":"empty_response"}';
+    let openaiData: Record<string, unknown>;
+    try {
+      openaiData = JSON.parse(openaiText);
+    } catch {
+      return ok({ error: 'Failed to parse OpenAI response' });
+    }
+
+    const content = (openaiData.choices as any)?.[0]?.message?.content ?? '{"error":"empty_response"}';
 
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(content);
     } catch {
-      return new Response(JSON.stringify({ error: 'parse_failed', raw: content }), {
-        status: 500,
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-      });
+      return ok({ error: `AI returned non-JSON: ${content}` });
     }
 
-    return new Response(JSON.stringify(parsed), {
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-    });
+    return ok(parsed);
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-    });
+    console.error('Edge function crash:', err);
+    return ok({ error: String(err) });
   }
 });
