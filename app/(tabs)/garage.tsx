@@ -12,12 +12,9 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../../supabase';
-import {
-  getLevelInfo,
-  getXpForRarity,
-  LevelInfo,
-} from '../../constants/levels';
+import { getLevelInfo, getXpForRarity, LevelInfo } from '../../constants/levels';
 import LevelCardModal from '../../components/LevelCardModal';
+import { C } from '../../constants/colors';
 
 type Spot = {
   id: string;
@@ -47,16 +44,10 @@ export default function GarageScreen() {
   const fetchSpots = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
-    // Get username from email
     setUsername(user.email?.split('@')[0] ?? 'Spotter');
-
     const { data, error } = await supabase
-      .from('spots')
-      .select('*')
-      .eq('user_id', user.id)
+      .from('spots').select('*').eq('user_id', user.id)
       .order('spotted_at', { ascending: false });
-
     if (!error && data) {
       setSpots(data);
       setStats({
@@ -76,11 +67,11 @@ export default function GarageScreen() {
 
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
-      case 'platine':    return '#00FFFF';
-      case 'legendaire': return '#FFD700';
-      case 'epique':     return '#9B59B6';
-      case 'rare':       return '#3498DB';
-      default:           return '#555';
+      case 'platine':    return C.platinum;  // cyan = brand
+      case 'legendaire': return C.legendary;
+      case 'epique':     return C.epic;
+      case 'rare':       return C.rare;
+      default:           return C.common;
     }
   };
 
@@ -94,15 +85,11 @@ export default function GarageScreen() {
     }
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('fr-FR', {
-      day: '2-digit', month: 'short', year: 'numeric',
-    });
-  };
+  const formatDate = (d: string) =>
+    new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  const handleImageError = (id: string) => {
+  const handleImageError = (id: string) =>
     setBrokenImages(prev => new Set(prev).add(id));
-  };
 
   const renderThumbnail = (item: Spot) => {
     if (item.photo_url && !brokenImages.has(item.id)) {
@@ -116,7 +103,8 @@ export default function GarageScreen() {
       );
     }
     return (
-      <View style={[styles.spotThumbnail, styles.spotThumbnailEmpty, { borderColor: getRarityColor(item.rarity) + '44' }]}>
+      <View style={[styles.spotThumbnail, styles.spotThumbnailEmpty,
+        { borderColor: getRarityColor(item.rarity) + '44' }]}>
         <View style={[styles.rarityDot, { backgroundColor: getRarityColor(item.rarity) }]} />
       </View>
     );
@@ -125,15 +113,13 @@ export default function GarageScreen() {
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#00ff00" />
+        <ActivityIndicator size="large" color={C.cyan} />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-
-      {/* Level Card Modal */}
       <LevelCardModal
         visible={levelCardVisible}
         onClose={() => setLevelCardVisible(false)}
@@ -141,68 +127,58 @@ export default function GarageScreen() {
         username={username}
       />
 
-      {/* Spot Detail Modal */}
-      <Modal
-        visible={selectedSpot !== null}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setSelectedSpot(null)}
-      >
+      {/* Detail Modal */}
+      <Modal visible={selectedSpot !== null} animationType="slide"
+        presentationStyle="pageSheet" onRequestClose={() => setSelectedSpot(null)}>
         {selectedSpot && (
           <View style={styles.modalContainer}>
             <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedSpot(null)}>
-              <Text style={styles.modalCloseText}>X</Text>
+              <Text style={styles.modalCloseText}>✕</Text>
             </TouchableOpacity>
             <ScrollView showsVerticalScrollIndicator={false}>
               {selectedSpot.photo_url && !brokenImages.has(selectedSpot.id) ? (
-                <Image
-                  source={{ uri: selectedSpot.photo_url }}
-                  style={styles.modalPhoto}
-                  resizeMode="cover"
-                  onError={() => handleImageError(selectedSpot.id)}
-                />
+                <Image source={{ uri: selectedSpot.photo_url }} style={styles.modalPhoto}
+                  resizeMode="cover" onError={() => handleImageError(selectedSpot.id)} />
               ) : (
-                <View style={[styles.modalPhotoPlaceholder, { borderBottomColor: getRarityColor(selectedSpot.rarity) }]}>
+                <View style={[styles.modalPhotoPlaceholder,
+                  { borderBottomColor: getRarityColor(selectedSpot.rarity) }]}>
                   <View style={[styles.rarityDotLg, { backgroundColor: getRarityColor(selectedSpot.rarity) }]} />
-                  <Text style={{ color: '#333', marginTop: 8, fontSize: 12 }}>Pas de photo</Text>
+                  <Text style={{ color: C.textTertiary, marginTop: 8, fontSize: 12 }}>Pas de photo</Text>
                 </View>
               )}
               <View style={styles.modalContent}>
+                {/* Accent line matching rarity */}
+                <View style={[styles.modalAccentLine, { backgroundColor: getRarityColor(selectedSpot.rarity) }]} />
                 <Text style={styles.modalMake}>
-                  {selectedSpot.make}{selectedSpot.year ? ` (${selectedSpot.year})` : ''}
+                  {selectedSpot.make}{selectedSpot.year ? ` · ${selectedSpot.year}` : ''}
                 </Text>
                 <Text style={styles.modalModel}>{selectedSpot.model}</Text>
                 <View style={[styles.modalBadge, {
                   backgroundColor: getRarityColor(selectedSpot.rarity) + '22',
                   borderColor: getRarityColor(selectedSpot.rarity),
-                  borderWidth: 1,
                 }]}>
                   <Text style={[styles.modalBadgeText, { color: getRarityColor(selectedSpot.rarity) }]}>
                     {getRarityLabel(selectedSpot.rarity)}
                   </Text>
                 </View>
                 <View style={styles.modalSpecs}>
-                  <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>Moteur</Text>
-                    <Text style={styles.modalSpecValue}>{selectedSpot.engine}</Text>
-                  </View>
-                  <View style={styles.modalDivider} />
-                  <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>Puissance</Text>
-                    <Text style={styles.modalSpecValue}>{selectedSpot.horsepower} ch</Text>
-                  </View>
-                  <View style={styles.modalDivider} />
-                  <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>XP gagne</Text>
-                    <Text style={[styles.modalSpecValue, { color: getRarityColor(selectedSpot.rarity) }]}>
-                      +{getXpForRarity(selectedSpot.rarity)} XP
-                    </Text>
-                  </View>
-                  <View style={styles.modalDivider} />
-                  <View style={styles.modalSpecRow}>
-                    <Text style={styles.modalSpecLabel}>Spotte le</Text>
-                    <Text style={styles.modalSpecValue}>{formatDate(selectedSpot.spotted_at)}</Text>
-                  </View>
+                  {[
+                    ['Moteur', selectedSpot.engine],
+                    ['Puissance', `${selectedSpot.horsepower} ch`],
+                    ['XP gagne', `+${getXpForRarity(selectedSpot.rarity)} XP`],
+                    ['Spotte le', formatDate(selectedSpot.spotted_at)],
+                  ].map(([label, value], i, arr) => (
+                    <View key={label}>
+                      <View style={styles.modalSpecRow}>
+                        <Text style={styles.modalSpecLabel}>{label}</Text>
+                        <Text style={[
+                          styles.modalSpecValue,
+                          label === 'XP gagne' && { color: getRarityColor(selectedSpot.rarity) },
+                        ]}>{value}</Text>
+                      </View>
+                      {i < arr.length - 1 && <View style={styles.modalDivider} />}
+                    </View>
+                  ))}
                   {selectedSpot.latitude != null && (
                     <>
                       <View style={styles.modalDivider} />
@@ -225,29 +201,21 @@ export default function GarageScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.title}>Mon Garage</Text>
+          <View style={styles.headerAccentLine} />
           <Text style={styles.subtitle}>
             {stats.total} voiture{stats.total > 1 ? 's' : ''} spottee{stats.total > 1 ? 's' : ''}
           </Text>
         </View>
-
-        {/* Tappable level badge -> opens LevelCard */}
-        <TouchableOpacity
-          style={styles.headerRight}
-          onPress={() => setLevelCardVisible(true)}
-          activeOpacity={0.7}
-        >
-          <View style={[
-            styles.levelBadge,
-            { backgroundColor: levelInfo.color + '22', borderColor: levelInfo.color },
-          ]}>
+        <TouchableOpacity style={styles.headerRight}
+          onPress={() => setLevelCardVisible(true)} activeOpacity={0.7}>
+          <View style={[styles.levelBadge,
+            { backgroundColor: levelInfo.color + '22', borderColor: levelInfo.color }]}>
             <Text style={[styles.levelText, { color: levelInfo.color }]}>LVL {levelInfo.level}</Text>
           </View>
           <Text style={[styles.levelName, { color: levelInfo.color }]}>{levelInfo.title}</Text>
           <View style={styles.xpBarBg}>
-            <View style={[
-              styles.xpBarFill,
-              { flex: levelInfo.progress, backgroundColor: levelInfo.color },
-            ]} />
+            <View style={[styles.xpBarFill,
+              { flex: levelInfo.progress, backgroundColor: levelInfo.color }]} />
             <View style={{ flex: Math.max(0, 1 - levelInfo.progress) }} />
           </View>
           <Text style={[styles.xpText, { color: levelInfo.color + 'aa' }]}>
@@ -260,25 +228,26 @@ export default function GarageScreen() {
 
       {/* Stats */}
       <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statNumber}>{stats.total}</Text>
+        <View style={[styles.statCard, styles.statCardPrimary]}>
+          <View style={styles.statCardAccent} />
+          <Text style={[styles.statNumber, { color: C.cyan }]}>{stats.total}</Text>
           <Text style={styles.statLabel}>Total</Text>
         </View>
         <View style={styles.statCard}>
-          <Text style={[styles.statNumber, { color: '#FFD700' }]}>{stats.legendary}</Text>
-          <Text style={styles.statLabel}>Legendaires</Text>
+          <Text style={[styles.statNumber, { color: C.legendary }]}>{stats.legendary}</Text>
+          <Text style={styles.statLabel}>Légendaires</Text>
         </View>
         <View style={styles.statCard}>
-          <Text style={[styles.statNumber, { color: '#9B59B6' }]}>{stats.epic}</Text>
-          <Text style={styles.statLabel}>Epiques</Text>
+          <Text style={[styles.statNumber, { color: C.epic }]}>{stats.epic}</Text>
+          <Text style={styles.statLabel}>Épiques</Text>
         </View>
       </View>
 
-      {/* Spot list */}
       {spots.length === 0 ? (
         <View style={styles.empty}>
+          <Text style={styles.emptyIcon}>🚗</Text>
           <Text style={styles.emptyText}>Ton garage est vide !</Text>
-          <Text style={styles.emptySubtext}>Va scanner ta premiere voiture</Text>
+          <Text style={styles.emptySubtext}>Va scanner ta première voiture</Text>
         </View>
       ) : (
         <FlatList
@@ -286,14 +255,11 @@ export default function GarageScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 16 }}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00ff00" />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.cyan} />
           }
           renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.spotCard}
-              activeOpacity={0.8}
-              onPress={() => setSelectedSpot(item)}
-            >
+            <TouchableOpacity style={styles.spotCard} activeOpacity={0.75}
+              onPress={() => setSelectedSpot(item)}>
               <View style={[styles.rarityBar, { backgroundColor: getRarityColor(item.rarity) }]} />
               {renderThumbnail(item)}
               <View style={styles.spotContent}>
@@ -306,7 +272,9 @@ export default function GarageScreen() {
                     <Text style={[styles.xpBadge, { color: getRarityColor(item.rarity) }]}>
                       +{getXpForRarity(item.rarity)} XP
                     </Text>
-                    <Text style={[styles.rarityBadgeSmall, { color: getRarityColor(item.rarity), borderColor: getRarityColor(item.rarity) + '44' }]}>
+                    <Text style={[styles.rarityBadgeSmall,
+                      { color: getRarityColor(item.rarity),
+                        borderColor: getRarityColor(item.rarity) + '44' }]}>
                       {getRarityLabel(item.rarity)}
                     </Text>
                   </View>
@@ -326,90 +294,104 @@ export default function GarageScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  centered: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
+  container: { flex: 1, backgroundColor: C.bg },
+  centered:  { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' },
+
   header: {
     paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16,
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
   },
   headerLeft: { flex: 1 },
   headerRight: { alignItems: 'flex-end', minWidth: 110 },
-  title: { color: 'white', fontSize: 28, fontWeight: 'bold' },
-  subtitle: { color: '#555', fontSize: 14, marginTop: 4 },
+  title: { color: C.textPrimary, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
+  headerAccentLine: { width: 36, height: 2, backgroundColor: C.cyan, marginTop: 6, marginBottom: 6, borderRadius: 1 },
+  subtitle: { color: C.textSecondary, fontSize: 13 },
+
   levelBadge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, marginBottom: 2 },
-  levelText: { fontSize: 13, fontWeight: 'bold' },
-  levelName: { fontSize: 10, marginBottom: 4 },
+  levelText:  { fontSize: 13, fontWeight: 'bold' },
+  levelName:  { fontSize: 10, marginBottom: 4 },
   xpBarBg: {
-    width: 100, height: 5,
-    backgroundColor: '#1a1a1a', borderRadius: 3,
-    flexDirection: 'row', overflow: 'hidden', marginBottom: 2,
+    width: 100, height: 4, backgroundColor: C.surfaceHigh,
+    borderRadius: 2, flexDirection: 'row', overflow: 'hidden', marginBottom: 2,
   },
-  xpBarFill: { borderRadius: 3 },
+  xpBarFill: { borderRadius: 2 },
   xpText: { fontSize: 10 },
+
   statsRow: { flexDirection: 'row', paddingHorizontal: 16, gap: 10, marginBottom: 8 },
   statCard: {
-    flex: 1, backgroundColor: '#111', borderRadius: 12,
-    padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#222',
+    flex: 1, backgroundColor: C.surface, borderRadius: 10,
+    padding: 14, alignItems: 'center', borderWidth: 1, borderColor: C.border,
+    overflow: 'hidden',
   },
-  statNumber: { color: '#00ff00', fontSize: 24, fontWeight: 'bold' },
-  statLabel: { color: '#555', fontSize: 11, marginTop: 2, textAlign: 'center' },
-  empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { color: 'white', fontSize: 20, fontWeight: 'bold' },
-  emptySubtext: { color: '#555', fontSize: 14, marginTop: 8 },
+  statCardPrimary: { borderColor: C.cyan + '44' },
+  statCardAccent: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    height: 2, backgroundColor: C.cyan,
+  },
+  statNumber: { fontSize: 24, fontWeight: 'bold' },
+  statLabel:  { color: C.textSecondary, fontSize: 11, marginTop: 2, textAlign: 'center' },
+
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8 },
+  emptyIcon:    { fontSize: 40 },
+  emptyText:    { color: C.textPrimary, fontSize: 20, fontWeight: 'bold' },
+  emptySubtext: { color: C.textSecondary, fontSize: 14 },
+
   spotCard: {
-    flexDirection: 'row', backgroundColor: '#111',
-    borderRadius: 14, marginBottom: 12,
-    overflow: 'hidden', borderWidth: 1, borderColor: '#222',
+    flexDirection: 'row', backgroundColor: C.surface,
+    borderRadius: 10, marginBottom: 12,
+    overflow: 'hidden', borderWidth: 1, borderColor: C.border,
   },
-  rarityBar: { width: 4 },
-  spotThumbnail: { width: 72, height: 72, margin: 10, borderRadius: 10 },
+  rarityBar: { width: 3 },
+  spotThumbnail: { width: 72, height: 72, margin: 10, borderRadius: 8 },
   spotThumbnailEmpty: {
-    backgroundColor: '#0d0d0d', justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1,
+    backgroundColor: C.bg, justifyContent: 'center',
+    alignItems: 'center', borderWidth: 1,
   },
-  rarityDot: { width: 12, height: 12, borderRadius: 6 },
+  rarityDot:   { width: 12, height: 12, borderRadius: 6 },
   rarityDotLg: { width: 24, height: 24, borderRadius: 12 },
   spotContent: { flex: 1, padding: 12 },
   spotHeader: {
     flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'flex-start', marginBottom: 8,
   },
-  spotMake: { color: '#888', fontSize: 12 },
-  spotModel: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  spotMake:  { color: C.textSecondary, fontSize: 12 },
+  spotModel: { color: C.textPrimary, fontSize: 17, fontWeight: 'bold' },
   spotRight: { alignItems: 'flex-end', gap: 3 },
-  xpBadge: { fontSize: 12, fontWeight: 'bold' },
+  xpBadge:   { fontSize: 12, fontWeight: 'bold' },
   rarityBadgeSmall: {
     fontSize: 9, fontWeight: '700', letterSpacing: 0.5,
     borderWidth: 1, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4,
   },
   spotFooter: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
-  spotSpec: { color: '#555', fontSize: 12 },
-  spotDate: { color: '#333', fontSize: 12, marginLeft: 'auto' },
-  // Detail modal
-  modalContainer: { flex: 1, backgroundColor: '#000' },
+  spotSpec:   { color: C.textSecondary, fontSize: 12 },
+  spotDate:   { color: C.textTertiary, fontSize: 12, marginLeft: 'auto' },
+
+  // Modal
+  modalContainer: { flex: 1, backgroundColor: C.bg },
   modalClose: {
     position: 'absolute', top: 16, right: 16, zIndex: 10,
-    backgroundColor: '#222', borderRadius: 20,
+    backgroundColor: C.surfaceHigh, borderRadius: 20,
     width: 36, height: 36, justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: C.border,
   },
-  modalCloseText: { color: 'white', fontSize: 14, fontWeight: 'bold' },
+  modalCloseText: { color: C.textPrimary, fontSize: 14, fontWeight: 'bold' },
   modalPhoto: { width: '100%', height: 280 },
   modalPhotoPlaceholder: {
-    width: '100%', height: 280, backgroundColor: '#0d0d0d',
-    justifyContent: 'center', alignItems: 'center',
-    borderBottomWidth: 2,
+    width: '100%', height: 280, backgroundColor: C.surface,
+    justifyContent: 'center', alignItems: 'center', borderBottomWidth: 2,
   },
-  modalContent: { padding: 24 },
-  modalMake: { color: '#888', fontSize: 16, marginBottom: 4 },
-  modalModel: { color: 'white', fontSize: 36, fontWeight: 'bold', marginBottom: 16 },
+  modalContent:     { padding: 24 },
+  modalAccentLine:  { height: 2, width: 48, borderRadius: 1, marginBottom: 16 },
+  modalMake:        { color: C.textSecondary, fontSize: 15, marginBottom: 4 },
+  modalModel:       { color: C.textPrimary, fontSize: 34, fontWeight: 'bold', marginBottom: 16 },
   modalBadge: {
-    alignSelf: 'flex-start', paddingHorizontal: 16,
-    paddingVertical: 6, borderRadius: 20, marginBottom: 24,
+    alignSelf: 'flex-start', paddingHorizontal: 14,
+    paddingVertical: 6, borderRadius: 8, marginBottom: 24, borderWidth: 1,
   },
-  modalBadgeText: { fontWeight: 'bold', fontSize: 13, letterSpacing: 1 },
-  modalSpecs: { backgroundColor: '#0d0d0d', borderRadius: 16, borderWidth: 1, borderColor: '#1a1a1a' },
-  modalSpecRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 16 },
-  modalSpecLabel: { color: '#555', fontSize: 15 },
-  modalSpecValue: { color: 'white', fontSize: 15, fontWeight: '600' },
-  modalDivider: { height: 1, backgroundColor: '#1a1a1a' },
+  modalBadgeText:  { fontWeight: 'bold', fontSize: 12, letterSpacing: 1.5 },
+  modalSpecs:      { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border },
+  modalSpecRow:    { flexDirection: 'row', justifyContent: 'space-between', padding: 16 },
+  modalSpecLabel:  { color: C.textSecondary, fontSize: 14 },
+  modalSpecValue:  { color: C.textPrimary, fontSize: 14, fontWeight: '600' },
+  modalDivider:    { height: 1, backgroundColor: C.border },
 });
