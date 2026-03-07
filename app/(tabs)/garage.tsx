@@ -14,7 +14,7 @@ import {
 import { supabase } from '../../supabase';
 import { getLevelInfo, getXpForRarity, LevelInfo } from '../../constants/levels';
 import LevelCardModal from '../../components/LevelCardModal';
-import QuestCarousel from '../../components/QuestCarousel';
+import ActiveQuestCard from '../../components/ActiveQuestCard';
 import { C } from '../../constants/colors';
 
 type Spot = {
@@ -32,15 +32,15 @@ type Spot = {
 };
 
 export default function GarageScreen() {
-  const [spots, setSpots]         = useState<Spot[]>([]);
-  const [loading, setLoading]     = useState(true);
+  const [spots, setSpots]           = useState<Spot[]>([]);
+  const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [totalSpots, setTotalSpots] = useState(0);
-  const [totalXp, setTotalXp]     = useState(0);
-  const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null);
-  const [levelInfo, setLevelInfo]  = useState<LevelInfo>(getLevelInfo(0));
+  const [totalXp, setTotalXp]       = useState(0);
+  const [selectedSpot, setSelectedSpot]   = useState<Spot | null>(null);
+  const [levelInfo, setLevelInfo]         = useState<LevelInfo>(getLevelInfo(0));
   const [levelCardVisible, setLevelCardVisible] = useState(false);
-  const [username, setUsername]    = useState('Spotter');
+  const [username, setUsername]     = useState('Spotter');
   const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set());
 
   const fetchSpots = async () => {
@@ -155,15 +155,17 @@ export default function GarageScreen() {
                 </View>
                 <View style={styles.modalSpecs}>
                   {[
-                    ['Moteur', selectedSpot.engine, null],
-                    ['Puissance', `${selectedSpot.horsepower} ch`, null],
-                    ['XP gagn\u00e9', `+${getXpForRarity(selectedSpot.rarity)} XP`, getRarityColor(selectedSpot.rarity)],
-                    ['Spott\u00e9 le', formatDate(selectedSpot.spotted_at), null],
+                    ['Moteur',      selectedSpot.engine,                           null],
+                    ['Puissance',   `${selectedSpot.horsepower} ch`,               null],
+                    ['XP gagn\u00e9',`+${getXpForRarity(selectedSpot.rarity)} XP`, getRarityColor(selectedSpot.rarity)],
+                    ['Spott\u00e9 le', formatDate(selectedSpot.spotted_at),         null],
                   ].map(([label, value, color], i, arr) => (
                     <View key={String(label)}>
                       <View style={styles.modalSpecRow}>
                         <Text style={styles.modalSpecLabel}>{label}</Text>
-                        <Text style={[styles.modalSpecValue, color ? { color: String(color) } : {}]}>{value}</Text>
+                        <Text style={[styles.modalSpecValue, color ? { color: String(color) } : {}]}>
+                          {value}
+                        </Text>
                       </View>
                       {i < arr.length - 1 && <View style={styles.modalDivider} />}
                     </View>
@@ -215,8 +217,8 @@ export default function GarageScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Quest Carousel — remplace les 3 cartes stats */}
-      <QuestCarousel spots={spots} totalXp={totalXp} />
+      {/* Qu\u00eate active s\u00e9quentielle */}
+      <ActiveQuestCard spots={spots} totalXp={totalXp} />
 
       {/* Liste des spots */}
       {spots.length === 0 ? (
@@ -229,7 +231,7 @@ export default function GarageScreen() {
         <FlatList
           data={spots}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={{ padding: 16 }}
+          contentContainerStyle={{ padding: 16, paddingTop: 8 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.cyan} />
           }
@@ -280,7 +282,7 @@ const styles = StyleSheet.create({
   headerRight: { alignItems: 'flex-end', minWidth: 110 },
   title: { color: C.textPrimary, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
   headerAccentLine: { width: 36, height: 2, backgroundColor: C.cyan, marginTop: 6, marginBottom: 6, borderRadius: 1 },
-  subtitle: { color: C.textSecondary, fontSize: 13 },
+  subtitle:   { color: C.textSecondary, fontSize: 13 },
   levelBadge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, marginBottom: 2 },
   levelText:  { fontSize: 13, fontWeight: 'bold' },
   levelName:  { fontSize: 10, marginBottom: 4 },
@@ -290,7 +292,7 @@ const styles = StyleSheet.create({
   },
   xpBarFill: { borderRadius: 2 },
   xpText: { fontSize: 10 },
-  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8 },
+  empty:        { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8 },
   emptyIcon:    { fontSize: 40 },
   emptyText:    { color: C.textPrimary, fontSize: 20, fontWeight: 'bold' },
   emptySubtext: { color: C.textSecondary, fontSize: 14 },
