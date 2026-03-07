@@ -63,6 +63,15 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="shop"
+        options={{
+          title: 'Shop',
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={24} name="cart.fill" color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

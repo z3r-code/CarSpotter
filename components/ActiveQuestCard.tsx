@@ -7,11 +7,12 @@ import {
   Text,
   View,
 } from 'react-native';
+import { supabase } from '../supabase';
 import { C } from '../constants/colors';
 import { QUESTS, QuestSpot } from '../constants/quests';
+import { COINS_PER_QUEST } from '../constants/coins';
+import { awardCoins, isQuestRewarded, markQuestRewarded } from '../services/CoinsService';
 
-// Largeur utile de la barre de progression
-// screen - (padding card 16x2) - (padding wrapper 16x2)
 const BAR_W = Dimensions.get('window').width - 64;
 
 interface Props {
@@ -20,7 +21,6 @@ interface Props {
 }
 
 export default function ActiveQuestCard({ spots, totalXp }: Props) {
-  // — Animations ———————————————————————————————
   const barAnim     = useRef(new Animated.Value(0)).current;
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale   = useRef(new Animated.Value(0.96)).current;
@@ -28,8 +28,8 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
 
   const prevQuestIdRef = useRef<string | null>(null);
   const [justUnlocked, setJustUnlocked] = useState(false);
+  const [questCoinsEarned, setQuestCoinsEarned] = useState(0);
 
-  // — Calcul des quêtes ———————————————————————————
   const processed = QUESTS.map((q, i) => {
     const current   = q.getProgress(spots, totalXp);
     const completed = current >= q.maxProgress;
@@ -41,10 +41,9 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
   const activeQuest    = activeIndex === -1 ? null : processed[activeIndex];
   const completedCount = processed.filter(q => q.completed).length;
   const nextQuest      = activeIndex !== -1 && activeIndex + 1 < QUESTS.length
-    ? QUESTS[activeIndex + 1]
-    : null;
+    ? QUESTS[activeIndex + 1] : null;
 
-  // — Animation d'entrée (montage) ——————————————————
+  // Animation d'entrée
   useEffect(() => {
     Animated.parallel([
       Animated.timing(cardOpacity, { toValue: 1, duration: 350, useNativeDriver: true }),
@@ -52,35 +51,48 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
     ]).start();
   }, []);
 
-  // — Barre + détection changement de quête ————————————
+  // Barre + changement de quête + récompense en pièces
   useEffect(() => {
     const targetPct = activeQuest?.pct ?? 1;
 
-    // Une nouvelle quête vient d'être débloquée
     if (
       prevQuestIdRef.current !== null &&
       activeQuest &&
       prevQuestIdRef.current !== activeQuest.id
     ) {
-      setJustUnlocked(true);
-      barAnim.setValue(0); // repart de 0 pour la nouvelle quête
+      const completedQuestId = prevQuestIdRef.current;
 
-      // Rebond de la carte
+      // Animation débloquée
+      setJustUnlocked(true);
+      barAnim.setValue(0);
       Animated.sequence([
         Animated.spring(cardScale, { toValue: 1.025, friction: 4, useNativeDriver: true }),
         Animated.spring(cardScale, { toValue: 1,     friction: 5, useNativeDriver: true }),
       ]).start();
-
-      // Glow cyan temporaire
       Animated.sequence([
         Animated.timing(glowOpacity, { toValue: 1, duration: 300, useNativeDriver: false }),
         Animated.timing(glowOpacity, { toValue: 0, duration: 800, useNativeDriver: false }),
       ]).start();
-
       setTimeout(() => setJustUnlocked(false), 2600);
+
+      // Récompense +2 pièces (une seule fois par quête)
+      (async () => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return;
+          const alreadyRewarded = await isQuestRewarded(user.id, completedQuestId);
+          if (!alreadyRewarded) {
+            await awardCoins(user.id, COINS_PER_QUEST);
+            await markQuestRewarded(user.id, completedQuestId);
+            setQuestCoinsEarned(COINS_PER_QUEST);
+            setTimeout(() => setQuestCoinsEarned(0), 3000);
+          }
+        } catch (e) {
+          console.log('Quest reward error:', e);
+        }
+      })();
     }
 
-    // Barre qui se remplit en douceur
     Animated.timing(barAnim, {
       toValue: targetPct,
       duration: 1000,
@@ -92,19 +104,12 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
   }, [activeQuest?.id, activeQuest?.pct]);
 
   const barWidth = barAnim.interpolate({
-    inputRange:  [0, 1],
-    outputRange: [0, BAR_W],
-    extrapolate: 'clamp',
+    inputRange: [0, 1], outputRange: [0, BAR_W], extrapolate: 'clamp',
   });
-
   const cardBorderColor = glowOpacity.interpolate({
-    inputRange:  [0, 1],
-    outputRange: [C.border, C.cyan],
+    inputRange: [0, 1], outputRange: [C.border, C.cyan],
   });
 
-  // ——————————————————————————————————————————————————
-  // Toutes les quêtes accomplies
-  // ——————————————————————————————————————————————————
   if (!activeQuest) {
     return (
       <View style={styles.wrapper}>
@@ -126,27 +131,27 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
     );
   }
 
-  // ——————————————————————————————————————————————————
-  // Quête active
-  // ——————————————————————————————————————————————————
   return (
     <Animated.View style={[
       styles.wrapper,
       { opacity: cardOpacity, transform: [{ scale: cardScale }] },
     ]}>
-      {/* En-t\u00eate */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.activeDot} />
           <Text style={styles.headerLabel}>QU\u00caTE ACTIVE</Text>
         </View>
-        <Text style={styles.headerCounter}>{completedCount} / {QUESTS.length} compl\u00e9t\u00e9es</Text>
+        <View style={styles.headerRight}>
+          {questCoinsEarned > 0 && (
+            <View style={styles.coinsBadge}>
+              <Text style={styles.coinsText}>+{questCoinsEarned} \uD83E\uDE99</Text>
+            </View>
+          )}
+          <Text style={styles.headerCounter}>{completedCount} / {QUESTS.length} compl\u00e9t\u00e9es</Text>
+        </View>
       </View>
 
-      {/* Carte principale */}
       <Animated.View style={[styles.card, { borderColor: cardBorderColor }]}>
-
-        {/* Ligne top : cat\u00e9gorie + num\u00e9ro + XP */}
         <View style={styles.topRow}>
           <View style={[styles.catBadge, {
             backgroundColor: activeQuest.categoryColor + '22',
@@ -156,7 +161,6 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
               {activeQuest.category.toUpperCase()}
             </Text>
           </View>
-
           {justUnlocked
             ? <View style={styles.unlockedBadge}>
                 <Text style={styles.unlockedText}>\uD83D\uDD13 D\u00c9BLOQU\u00c9E</Text>
@@ -165,13 +169,11 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
                 {activeQuest.questIndex} / {QUESTS.length}
               </Text>
           }
-
           <Text style={[styles.xpReward, { color: C.legendary }]}>
             +{activeQuest.xpReward}\u00a0XP
           </Text>
         </View>
 
-        {/* Contenu : emoji + texte */}
         <View style={styles.mainRow}>
           <Text style={styles.emoji}>{activeQuest.emoji}</Text>
           <View style={styles.mainRight}>
@@ -180,7 +182,6 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
           </View>
         </View>
 
-        {/* Barre de progression anim\u00e9e */}
         <View style={styles.progressTrack}>
           <Animated.View style={[
             styles.progressFill,
@@ -188,7 +189,6 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
           ]} />
         </View>
 
-        {/* Compteur */}
         <View style={styles.bottomRow}>
           <Text style={styles.progressCount}>
             {activeQuest.current}\u00a0/\u00a0{activeQuest.maxProgress}
@@ -198,7 +198,6 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
           </Text>
         </View>
 
-        {/* Teaser qu\u00eate suivante */}
         {nextQuest && (
           <View style={styles.nextHint}>
             <Text style={styles.nextHintLabel}>SUIVANTE</Text>
@@ -214,82 +213,37 @@ export default function ActiveQuestCard({ spots, totalXp }: Props) {
 
 const styles = StyleSheet.create({
   wrapper: { paddingHorizontal: 16, marginBottom: 6 },
-
-  // En-t\u00eate au-dessus de la carte
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 10,
-  },
-  headerLeft:   { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  headerLeft:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   activeDot:    { width: 6, height: 6, borderRadius: 3, backgroundColor: C.cyan },
   headerLabel:  { color: C.textSecondary, fontSize: 11, fontWeight: '700', letterSpacing: 1.5 },
-  headerCounter:{ color: C.textTertiary,  fontSize: 11 },
-
-  // Carte
-  card: {
-    backgroundColor: C.surface,
-    borderRadius: 14, padding: 16,
-    borderWidth: 1.5, borderColor: C.border,
-  },
-  cardAllDone: {
-    borderColor: C.cyan + '55',
-    alignItems: 'center', gap: 8, paddingVertical: 24,
-  },
+  headerCounter:{ color: C.textTertiary, fontSize: 11 },
+  coinsBadge:   { backgroundColor: C.surface, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: C.border },
+  coinsText:    { color: C.legendary, fontSize: 11, fontWeight: '900' },
+  card: { backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1.5, borderColor: C.border },
+  cardAllDone: { borderColor: C.cyan + '55', alignItems: 'center', gap: 8, paddingVertical: 24 },
   allDoneEmoji: { fontSize: 44 },
   allDoneTitle: { color: C.textPrimary, fontSize: 18, fontWeight: '800' },
   allDoneSub:   { color: C.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 18 },
-
-  // Ligne sup\u00e9rieure
-  topRow: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', marginBottom: 14,
-  },
-  catBadge: {
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: 5, borderWidth: 1,
-  },
-  catText: { fontSize: 9, fontWeight: '800', letterSpacing: 1 },
-  questNumber: { color: C.textTertiary, fontSize: 12 },
-  xpReward:    { fontSize: 14, fontWeight: '800' },
-
-  // Badge "vient d'être d\u00e9bloqu\u00e9e"
-  unlockedBadge: {
-    backgroundColor: C.cyanSoft,
-    borderRadius: 5, borderWidth: 1, borderColor: C.cyan + '55',
-    paddingHorizontal: 8, paddingVertical: 3,
-  },
+  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  catBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 5, borderWidth: 1 },
+  catText:      { fontSize: 9, fontWeight: '800', letterSpacing: 1 },
+  questNumber:  { color: C.textTertiary, fontSize: 12 },
+  xpReward:     { fontSize: 14, fontWeight: '800' },
+  unlockedBadge:{ backgroundColor: C.cyanSoft, borderRadius: 5, borderWidth: 1, borderColor: C.cyan + '55', paddingHorizontal: 8, paddingVertical: 3 },
   unlockedText: { color: C.cyan, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-
-  // Contenu principal
-  mainRow:   { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 18 },
-  emoji:     { fontSize: 36, lineHeight: 42 },
-  mainRight: { flex: 1 },
-  questName: { color: C.textPrimary, fontSize: 18, fontWeight: '800', marginBottom: 4 },
-  description: { color: C.textSecondary, fontSize: 13, lineHeight: 18 },
-
-  // Barre de progression
-  progressTrack: {
-    height: 6, backgroundColor: C.surfaceHigh,
-    borderRadius: 3, overflow: 'hidden', marginBottom: 8,
-  },
-  progressFill: { height: '100%', borderRadius: 3 },
-
-  // Bas
-  bottomRow: {
-    flexDirection: 'row', justifyContent: 'space-between', marginBottom: 0,
-  },
+  mainRow:    { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 18 },
+  emoji:      { fontSize: 36, lineHeight: 42 },
+  mainRight:  { flex: 1 },
+  questName:  { color: C.textPrimary, fontSize: 18, fontWeight: '800', marginBottom: 4 },
+  description:{ color: C.textSecondary, fontSize: 13, lineHeight: 18 },
+  progressTrack: { height: 6, backgroundColor: C.surfaceHigh, borderRadius: 3, overflow: 'hidden', marginBottom: 8 },
+  progressFill:  { height: '100%', borderRadius: 3 },
+  bottomRow:     { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 0 },
   progressCount: { color: C.textSecondary, fontSize: 12 },
   progressPct:   { fontSize: 12, fontWeight: '700' },
-
-  // Teaser qu\u00eate suivante
-  nextHint: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    marginTop: 14, paddingTop: 12,
-    borderTopWidth: 1, borderTopColor: C.border,
-  },
-  nextHintLabel: {
-    color: C.textTertiary, fontSize: 9,
-    fontWeight: '800', letterSpacing: 1.5,
-  },
-  nextHintText: { color: C.textSecondary, fontSize: 12 },
+  nextHint:      { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
+  nextHintLabel: { color: C.textTertiary, fontSize: 9, fontWeight: '800', letterSpacing: 1.5 },
+  nextHintText:  { color: C.textSecondary, fontSize: 12 },
 });
