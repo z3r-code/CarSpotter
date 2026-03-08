@@ -8,22 +8,22 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerShown: false,
-        tabBarButton: HapticTab,
-        tabBarActiveTintColor: C.cyan,
+        headerShown:            false,
+        tabBarButton:           HapticTab,
+        tabBarActiveTintColor:  C.cyan,
         tabBarInactiveTintColor: C.textTertiary,
         tabBarStyle: {
           backgroundColor: C.surface,
-          borderTopColor: C.border,
-          borderTopWidth: 1,
-          height: Platform.OS === 'ios' ? 88 : 66,
-          paddingBottom: Platform.OS === 'ios' ? 28 : 10,
-          paddingTop: 6,
+          borderTopColor:  C.border,
+          borderTopWidth:  1,
+          height:          Platform.OS === 'ios' ? 88 : 66,
+          paddingBottom:   Platform.OS === 'ios' ? 28 : 10,
+          paddingTop:      6,
         },
         tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: '600',
-          letterSpacing: 0.5,
+          fontSize:     9,
+          fontWeight:   '600',
+          letterSpacing: 0.3,
         },
       }}
     >
@@ -51,6 +51,15 @@ export default function TabLayout() {
           title: 'Garage',
           tabBarIcon: ({ color }) => (
             <IconSymbol size={24} name="car.fill" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="pokedex"
+        options={{
+          title: 'Collection',
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={24} name="book.fill" color={color} />
           ),
         }}
       />
