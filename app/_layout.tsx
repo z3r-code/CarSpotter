@@ -4,13 +4,17 @@ import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { supabase } from '../supabase';
 import SplashLoader from '../components/SplashLoader';
+import { DailyStreakModal } from '../components/streak/DailyStreakModal';
+import { useStreak } from '../hooks/useStreak';
 
 export default function RootLayout() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [authReady, setAuthReady] = useState(false);
+  const [session,    setSession]    = useState<Session | null>(null);
+  const [authReady,  setAuthReady]  = useState(false);
   const [showSplash, setShowSplash] = useState(true);
-  const router = useRouter();
+  const router   = useRouter();
   const segments = useSegments();
+
+  const { streakStatus, showModal, isClaiming, claimStreak, dismissModal } = useStreak();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -38,10 +42,22 @@ export default function RootLayout() {
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
       <Slot />
+
       {showSplash && (
         <SplashLoader
           isReady={authReady}
           onComplete={() => setShowSplash(false)}
+        />
+      )}
+
+      {/* Daily Streak Modal — affiché uniquement après le splash et si connecté */}
+      {session && streakStatus && !showSplash && (
+        <DailyStreakModal
+          visible={showModal}
+          streakStatus={streakStatus}
+          isClaiming={isClaiming}
+          onClaim={claimStreak}
+          onDismiss={dismissModal}
         />
       )}
     </View>

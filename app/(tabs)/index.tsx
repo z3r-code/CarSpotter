@@ -21,6 +21,7 @@ import { ScanResult } from '../../types/car.types';
 import { C } from '../../constants/colors';
 import { COINS_PER_RARITY } from '../../constants/coins';
 import { awardCoins } from '../../services/CoinsService';
+import { CardFlipReveal } from '../../components/scan/CardFlipReveal';
 
 const SCAN_RED     = '#FF2D2D';
 const SCAN_RED_DIM = '#FF2D2D44';
@@ -50,6 +51,7 @@ export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [isScanning, setIsScanning]     = useState(false);
   const [scanResult, setScanResult]     = useState<ScanResult | null>(null);
+  const [showFlip,   setShowFlip]       = useState(false);
   const [saved, setSaved]               = useState(false);
   const [coinsEarned, setCoinsEarned]   = useState(0);
   const [scansToday, setScansToday]     = useState(0);
@@ -72,9 +74,9 @@ export default function ScannerScreen() {
   if (!permission.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>Permission cam\u00e9ra requise</Text>
+        <Text style={styles.text}>Permission caméra requise</Text>
         <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Autoriser la cam\u00e9ra</Text>
+          <Text style={styles.buttonText}>Autoriser la caméra</Text>
         </TouchableOpacity>
       </View>
     );
@@ -135,6 +137,7 @@ export default function ScannerScreen() {
       ]);
 
       setScanResult({ ...car, photo_url: photoUrl });
+      setShowFlip(true); // ← déclenche le Card Flip Reveal
       setScansToday(prev => prev + 1);
 
       const { error } = await supabase.from('spots').insert({
@@ -145,7 +148,6 @@ export default function ScannerScreen() {
 
       if (!error) {
         setSaved(true);
-        // 🪙 Attribution des pièces selon la rareté
         const coins = COINS_PER_RARITY[car.rarity] ?? 1;
         setCoinsEarned(coins);
         await awardCoins(user.id, coins);
@@ -169,6 +171,7 @@ export default function ScannerScreen() {
 
   const resetScan = () => {
     setScanResult(null);
+    setShowFlip(false);
     setSaved(false);
     setCoinsEarned(0);
     setScanError(null);
@@ -190,63 +193,74 @@ export default function ScannerScreen() {
   // ── Résultat ─────────────────────────────────────────────
   if (scanResult) {
     return (
-      <ScrollView contentContainerStyle={styles.resultContainer}>
-        <View style={styles.resultAccentLine} />
-        <Text style={styles.successText}>SPOT R\u00c9USSI !</Text>
+      <View style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.resultContainer}>
+          <View style={styles.resultAccentLine} />
+          <Text style={styles.successText}>SPOT RÉUSSI !</Text>
 
-        <View style={[styles.photoWrapper, { borderColor: getRarityColor(scanResult.rarity) }]}>
-          {scanResult.photo_url
-            ? <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
-            : <View style={styles.resultPhotoPlaceholder}>
-                <Text style={{ color: C.textSecondary, fontSize: 40 }}>\uD83D\uDE97</Text>
-              </View>
-          }
-        </View>
-
-        <View style={[styles.rarityBadge, {
-          backgroundColor: getRarityColor(scanResult.rarity) + '33',
-          borderColor: getRarityColor(scanResult.rarity),
-        }]}>
-          <Text style={[styles.rarityText, { color: getRarityColor(scanResult.rarity) }]}>
-            {scanResult.rarity.toUpperCase()}
-          </Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.carTitle}>
-            {scanResult.make}{scanResult.year ? ` \u00b7 ${scanResult.year}` : ''}
-          </Text>
-          <Text style={styles.carModel}>{scanResult.model}</Text>
-          <View style={styles.divider} />
-          {[
-            ['Moteur',    scanResult.engine],
-            ['Puissance', `${scanResult.horsepower} ch`],
-            ['Confiance IA', `${scanResult.confidence}%`],
-          ].map(([label, value]) => (
-            <View key={label} style={styles.specRow}>
-              <Text style={styles.specLabel}>{label}</Text>
-              <Text style={styles.specValue}>{value}</Text>
-            </View>
-          ))}
-        </View>
-
-        {saved && (
-          <View style={styles.savedBanner}>
-            <View style={styles.savedRow}>
-              <Text style={styles.savedText}>\u2713 Ajout\u00e9 \u00e0 ton Garage !</Text>
-              {coinsEarned > 0 && (
-                <View style={styles.coinsBadge}>
-                  <Text style={styles.coinsText}>+{coinsEarned} \uD83E\uDE99</Text>
+          <View style={[styles.photoWrapper, { borderColor: getRarityColor(scanResult.rarity) }]}>
+            {scanResult.photo_url
+              ? <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
+              : <View style={styles.resultPhotoPlaceholder}>
+                  <Text style={{ color: C.textSecondary, fontSize: 40 }}>🚗</Text>
                 </View>
-              )}
-            </View>
+            }
           </View>
-        )}
 
-        <TouchableOpacity style={styles.button} onPress={resetScan}>
-          <Text style={styles.buttonText}>Scanner une autre voiture</Text>
-        </TouchableOpacity>
-      </ScrollView>
+          <View style={[styles.rarityBadge, {
+            backgroundColor: getRarityColor(scanResult.rarity) + '33',
+            borderColor: getRarityColor(scanResult.rarity),
+          }]}>
+            <Text style={[styles.rarityText, { color: getRarityColor(scanResult.rarity) }]}>
+              {scanResult.rarity.toUpperCase()}
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.carTitle}>
+              {scanResult.make}{scanResult.year ? ` · ${scanResult.year}` : ''}
+            </Text>
+            <Text style={styles.carModel}>{scanResult.model}</Text>
+            <View style={styles.divider} />
+            {([
+              ['Moteur',       scanResult.engine],
+              ['Puissance',    `${scanResult.horsepower} ch`],
+              ['Confiance IA', `${scanResult.confidence}%`],
+            ] as [string, string][]).map(([label, value]) => (
+              <View key={label} style={styles.specRow}>
+                <Text style={styles.specLabel}>{label}</Text>
+                <Text style={styles.specValue}>{value}</Text>
+              </View>
+            ))}
+          </View>
+
+          {saved && (
+            <View style={styles.savedBanner}>
+              <View style={styles.savedRow}>
+                <Text style={styles.savedText}>✓ Ajouté à ton Garage !</Text>
+                {coinsEarned > 0 && (
+                  <View style={styles.coinsBadge}>
+                    <Text style={styles.coinsText}>+{coinsEarned} 🪙</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
+
+          <TouchableOpacity style={styles.button} onPress={resetScan}>
+            <Text style={styles.buttonText}>Scanner une autre voiture</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {/* Card Flip Reveal overlay — s'affiche par-dessus le résultat */}
+        {showFlip && (
+          <CardFlipReveal
+            result={scanResult}
+            coinsEarned={coinsEarned}
+            onDismiss={() => setShowFlip(false)}
+          />
+        )}
+      </View>
     );
   }
 
@@ -275,7 +289,7 @@ export default function ScannerScreen() {
         <View style={styles.overlay}>
           <Text style={styles.errorTitle}>Limite atteinte</Text>
           <Text style={styles.errorSubtitle}>
-            {`${MAX_FREE_SCANS_PER_DAY} scans utilis\u00e9s aujourd'hui.\nReviens demain !`}
+            {`${MAX_FREE_SCANS_PER_DAY} scans utilisés aujourd'hui.\nReviens demain !`}
           </Text>
           <TouchableOpacity style={styles.premiumButton}>
             <Text style={styles.premiumButtonText}>Passer Premium</Text>
@@ -288,10 +302,10 @@ export default function ScannerScreen() {
 
       {scanError === 'no_car' && (
         <View style={styles.overlay}>
-          <Text style={styles.errorTitle}>Aucune voiture d\u00e9tect\u00e9e</Text>
-          <Text style={styles.errorSubtitle}>R\u00e9essaie avec une meilleure vue !</Text>
+          <Text style={styles.errorTitle}>Aucune voiture détectée</Text>
+          <Text style={styles.errorSubtitle}>Réessaie avec une meilleure vue !</Text>
           <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>R\u00e9essayer</Text>
+            <Text style={styles.buttonText}>Réessayer</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -301,7 +315,7 @@ export default function ScannerScreen() {
           <Text style={styles.errorTitle}>Erreur</Text>
           <Text style={styles.errorSubtitle}>{debugError}</Text>
           <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>R\u00e9essayer</Text>
+            <Text style={styles.buttonText}>Réessayer</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -322,7 +336,7 @@ export default function ScannerScreen() {
             disabled={scansLeft <= 0}
           >
             <Text style={[styles.scanButtonText, scansLeft <= 0 && { color: C.textTertiary }]}>
-              {scansLeft <= 0 ? 'BLOQU\u00c9' : 'SCANNER'}
+              {scansLeft <= 0 ? 'BLOQUÉ' : 'SCANNER'}
             </Text>
           </TouchableOpacity>
         </View>
