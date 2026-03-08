@@ -1,65 +1,38 @@
-import { Session } from '@supabase/supabase-js';
-import { Slot, useRouter, useSegments } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { View } from 'react-native';
-import { supabase } from '../supabase';
-import SplashLoader from '../components/SplashLoader';
-import { DailyStreakModal } from '../components/streak/DailyStreakModal';
+import 'react-native-reanimated';
+import { useEffect } from 'react';
+import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useStreak } from '../hooks/useStreak';
+import { DailyStreakModal } from '../components/streak/DailyStreakModal';
+import { useNotifications } from '../hooks/useNotifications';
+
+SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [session,    setSession]    = useState<Session | null>(null);
-  const [authReady,  setAuthReady]  = useState(false);
-  const [showSplash, setShowSplash] = useState(true);
-  const router   = useRouter();
-  const segments = useSegments();
-
-  const { streakStatus, showModal, isClaiming, claimStreak, dismissModal } = useStreak();
+  const { showModal, currentStreak, onClaim } = useStreak();
+  useNotifications();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setAuthReady(true);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
+    SplashScreen.hideAsync();
   }, []);
 
-  useEffect(() => {
-    if (!authReady || showSplash) return;
-    const inAuthScreen = segments[0] === 'auth';
-    if (!session && !inAuthScreen) {
-      router.replace('/auth');
-    } else if (session && inAuthScreen) {
-      router.replace('/(tabs)');
-    }
-  }, [session, authReady, showSplash, segments]);
-
   return (
-    <View style={{ flex: 1, backgroundColor: '#000' }}>
-      <Slot />
-
-      {showSplash && (
-        <SplashLoader
-          isReady={authReady}
-          onComplete={() => setShowSplash(false)}
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <StatusBar style="light" />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen
+          name="profile/[userId]"
+          options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
         />
-      )}
-
-      {/* Daily Streak Modal — affiché uniquement après le splash et si connecté */}
-      {session && streakStatus && !showSplash && (
-        <DailyStreakModal
-          visible={showModal}
-          streakStatus={streakStatus}
-          isClaiming={isClaiming}
-          onClaim={claimStreak}
-          onDismiss={dismissModal}
-        />
-      )}
-    </View>
+      </Stack>
+      <DailyStreakModal
+        visible={showModal}
+        streak={currentStreak}
+        onClaim={onClaim}
+      />
+    </GestureHandlerRootView>
   );
 }
