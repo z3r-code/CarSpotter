@@ -20,8 +20,12 @@ import {
 import { ScanResult } from '../../types/car.types';
 import { C } from '../../constants/colors';
 import { COINS_PER_RARITY } from '../../constants/coins';
+import { XP_PER_RARITY } from '../../constants/xp';
 import { awardCoins } from '../../services/CoinsService';
+import { updateDailyQuestsOnScan } from '../../services/dailyQuestService';
 import { CardFlipReveal } from '../../components/scan/CardFlipReveal';
+import { FloatingReward } from '../../components/ui/FloatingRewards';
+import { useFloatingRewards } from '../../hooks/useFloatingRewards';
 
 const SCAN_RED     = '#FF2D2D';
 const SCAN_RED_DIM = '#FF2D2D44';
@@ -54,10 +58,13 @@ export default function ScannerScreen() {
   const [showFlip,   setShowFlip]       = useState(false);
   const [saved, setSaved]               = useState(false);
   const [coinsEarned, setCoinsEarned]   = useState(0);
+  const [xpEarned,    setXpEarned]      = useState(0);
   const [scansToday, setScansToday]     = useState(0);
   const [scanError, setScanError]       = useState<string | null>(null);
   const [debugError, setDebugError]     = useState<string | null>(null);
   const cameraRef = useRef<CameraView | null>(null);
+
+  const { rewards, triggerReward, removeReward } = useFloatingRewards();
 
   useEffect(() => {
     (async () => {
@@ -74,9 +81,9 @@ export default function ScannerScreen() {
   if (!permission.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>Permission caméra requise</Text>
+        <Text style={styles.text}>Permission cam\u00e9ra requise</Text>
         <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Autoriser la caméra</Text>
+          <Text style={styles.buttonText}>Autoriser la cam\u00e9ra</Text>
         </TouchableOpacity>
       </View>
     );
@@ -87,6 +94,7 @@ export default function ScannerScreen() {
     setIsScanning(true);
     setSaved(false);
     setCoinsEarned(0);
+    setXpEarned(0);
     setScanError(null);
     setDebugError(null);
 
@@ -137,7 +145,7 @@ export default function ScannerScreen() {
       ]);
 
       setScanResult({ ...car, photo_url: photoUrl });
-      setShowFlip(true); // ← déclenche le Card Flip Reveal
+      setShowFlip(true);
       setScansToday(prev => prev + 1);
 
       const { error } = await supabase.from('spots').insert({
@@ -148,9 +156,31 @@ export default function ScannerScreen() {
 
       if (!error) {
         setSaved(true);
+
+        // 🪙 Coins
         const coins = COINS_PER_RARITY[car.rarity] ?? 1;
         setCoinsEarned(coins);
         await awardCoins(user.id, coins);
+
+        // ✨ XP
+        const xp = XP_PER_RARITY[car.rarity] ?? 10;
+        setXpEarned(xp);
+
+        // 📊 Animations flottantes (décalées pour apparaître sur la carte flip)
+        setTimeout(() => {
+          triggerReward('xp',    xp);
+          triggerReward('coins', coins);
+        }, 900);
+
+        // 🎯 Mise à jour quêtes journalières
+        updateDailyQuestsOnScan(user.id, { rarity: car.rarity, make: car.make })
+          .then(completedIds => {
+            if (completedIds.length > 0) {
+              setTimeout(() => triggerReward('quest', 0), 1400);
+            }
+          })
+          .catch(e => console.log('Daily quest update error:', e));
+
       } else {
         console.log('Insert error:', error.message);
       }
@@ -174,6 +204,7 @@ export default function ScannerScreen() {
     setShowFlip(false);
     setSaved(false);
     setCoinsEarned(0);
+    setXpEarned(0);
     setScanError(null);
     setDebugError(null);
   };
@@ -196,13 +227,13 @@ export default function ScannerScreen() {
       <View style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.resultContainer}>
           <View style={styles.resultAccentLine} />
-          <Text style={styles.successText}>SPOT RÉUSSI !</Text>
+          <Text style={styles.successText}>SPOT R\u00c9USSI !</Text>
 
           <View style={[styles.photoWrapper, { borderColor: getRarityColor(scanResult.rarity) }]}>
             {scanResult.photo_url
               ? <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
               : <View style={styles.resultPhotoPlaceholder}>
-                  <Text style={{ color: C.textSecondary, fontSize: 40 }}>🚗</Text>
+                  <Text style={{ color: C.textSecondary, fontSize: 40 }}>\uD83D\uDE97</Text>
                 </View>
             }
           </View>
@@ -218,7 +249,7 @@ export default function ScannerScreen() {
 
           <View style={styles.card}>
             <Text style={styles.carTitle}>
-              {scanResult.make}{scanResult.year ? ` · ${scanResult.year}` : ''}
+              {scanResult.make}{scanResult.year ? ` \u00b7 ${scanResult.year}` : ''}
             </Text>
             <Text style={styles.carModel}>{scanResult.model}</Text>
             <View style={styles.divider} />
@@ -237,12 +268,19 @@ export default function ScannerScreen() {
           {saved && (
             <View style={styles.savedBanner}>
               <View style={styles.savedRow}>
-                <Text style={styles.savedText}>✓ Ajouté à ton Garage !</Text>
-                {coinsEarned > 0 && (
-                  <View style={styles.coinsBadge}>
-                    <Text style={styles.coinsText}>+{coinsEarned} 🪙</Text>
-                  </View>
-                )}
+                <Text style={styles.savedText}>\u2713 Ajout\u00e9 \u00e0 ton Garage !</Text>
+                <View style={styles.savedRewards}>
+                  {xpEarned > 0 && (
+                    <View style={[styles.rewardPill, { borderColor: C.cyan + '55' }]}>
+                      <Text style={[styles.rewardPillText, { color: C.cyan }]}>+{xpEarned} XP</Text>
+                    </View>
+                  )}
+                  {coinsEarned > 0 && (
+                    <View style={styles.coinsBadge}>
+                      <Text style={styles.coinsText}>+{coinsEarned} \uD83E\uDE99</Text>
+                    </View>
+                  )}
+                </View>
               </View>
             </View>
           )}
@@ -252,7 +290,7 @@ export default function ScannerScreen() {
           </TouchableOpacity>
         </ScrollView>
 
-        {/* Card Flip Reveal overlay — s'affiche par-dessus le résultat */}
+        {/* Card Flip Reveal */}
         {showFlip && (
           <CardFlipReveal
             result={scanResult}
@@ -260,6 +298,16 @@ export default function ScannerScreen() {
             onDismiss={() => setShowFlip(false)}
           />
         )}
+
+        {/* Floating Rewards — par-dessus tout */}
+        {rewards.map(item => (
+          <FloatingReward
+            key={item.id}
+            item={item}
+            onComplete={removeReward}
+            bottomOffset={180}
+          />
+        ))}
       </View>
     );
   }
@@ -289,7 +337,7 @@ export default function ScannerScreen() {
         <View style={styles.overlay}>
           <Text style={styles.errorTitle}>Limite atteinte</Text>
           <Text style={styles.errorSubtitle}>
-            {`${MAX_FREE_SCANS_PER_DAY} scans utilisés aujourd'hui.\nReviens demain !`}
+            {`${MAX_FREE_SCANS_PER_DAY} scans utilis\u00e9s aujourd'hui.\nReviens demain !`}
           </Text>
           <TouchableOpacity style={styles.premiumButton}>
             <Text style={styles.premiumButtonText}>Passer Premium</Text>
@@ -302,10 +350,10 @@ export default function ScannerScreen() {
 
       {scanError === 'no_car' && (
         <View style={styles.overlay}>
-          <Text style={styles.errorTitle}>Aucune voiture détectée</Text>
-          <Text style={styles.errorSubtitle}>Réessaie avec une meilleure vue !</Text>
+          <Text style={styles.errorTitle}>Aucune voiture d\u00e9tect\u00e9e</Text>
+          <Text style={styles.errorSubtitle}>R\u00e9essaie avec une meilleure vue !</Text>
           <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>Réessayer</Text>
+            <Text style={styles.buttonText}>R\u00e9essayer</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -315,7 +363,7 @@ export default function ScannerScreen() {
           <Text style={styles.errorTitle}>Erreur</Text>
           <Text style={styles.errorSubtitle}>{debugError}</Text>
           <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>Réessayer</Text>
+            <Text style={styles.buttonText}>R\u00e9essayer</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -336,7 +384,7 @@ export default function ScannerScreen() {
             disabled={scansLeft <= 0}
           >
             <Text style={[styles.scanButtonText, scansLeft <= 0 && { color: C.textTertiary }]}>
-              {scansLeft <= 0 ? 'BLOQUÉ' : 'SCANNER'}
+              {scansLeft <= 0 ? 'BLOQU\u00c9' : 'SCANNER'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -386,6 +434,9 @@ const styles = StyleSheet.create({
   savedBanner: { backgroundColor: C.cyanSoft, borderWidth: 1, borderColor: C.cyan + '55', borderRadius: 10, padding: 14, width: '100%', marginBottom: 20 },
   savedRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   savedText:   { color: C.cyan, fontSize: 15, fontWeight: '700' },
+  savedRewards: { flexDirection: 'row', gap: 6 },
+  rewardPill:   { backgroundColor: C.surface, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1 },
+  rewardPillText: { fontSize: 12, fontWeight: '900' },
   coinsBadge:  { backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: C.border },
   coinsText:   { color: C.legendary, fontSize: 14, fontWeight: '900' },
   button: { backgroundColor: SCAN_RED, padding: 16, borderRadius: 12, width: '100%', alignItems: 'center', shadowColor: SCAN_RED, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
