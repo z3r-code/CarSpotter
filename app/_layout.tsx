@@ -11,7 +11,15 @@ import { useNotifications } from '../hooks/useNotifications';
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const { showModal, currentStreak, onClaim } = useStreak();
+  // ✅ Noms corrects issus du hook useStreak
+  const {
+    showModal,
+    streakStatus,
+    isClaiming,
+    claimStreak,
+    dismissModal,
+  } = useStreak();
+
   useNotifications();
 
   useEffect(() => {
@@ -28,11 +36,17 @@ export default function RootLayout() {
           options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
         />
       </Stack>
-      <DailyStreakModal
-        visible={showModal}
-        streak={currentStreak}
-        onClaim={onClaim}
-      />
+
+      {/* ✅ Guard : on n'affiche le modal que si streakStatus est chargé */}
+      {streakStatus !== null && (
+        <DailyStreakModal
+          visible={showModal}
+          streakStatus={streakStatus}
+          isClaiming={isClaiming}
+          onClaim={claimStreak}
+          onDismiss={dismissModal}
+        />
+      )}
     </GestureHandlerRootView>
   );
 }

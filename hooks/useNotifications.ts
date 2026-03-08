@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '../supabase';
 import {
@@ -11,10 +12,11 @@ import {
 
 /**
  * À appeler UNE SEULE FOIS dans RootLayout.
- * Gère :
- * - Demande de permission + enregistrement du token
- * - Planification des rappels streak & quêtes
- * - Navigation au tap sur une notification
+ *
+ * Notes Expo Go + SDK 54 :
+ * - Les notifications locales (scheduled) fonctionnent en Expo Go iOS.
+ * - Le remote push token (getExpoPushTokenAsync) nécessite un dev build.
+ *   Le WARN affiché en console est normal et non bloquant.
  */
 export function useNotifications(): void {
   const responseListenerRef = useRef<Notifications.EventSubscription | null>(null);
@@ -26,14 +28,21 @@ export function useNotifications(): void {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || !mounted) return;
 
-      const token = await registerForPushNotifications();
-      if (token) await savePushToken(user.id, token).catch(console.error);
+      // ✅ Remote push token uniquement en dev build (pas en Expo Go)
+      // En Expo Go, registerForPushNotifications() retourne null via try/catch
+      if (Platform.OS !== 'web') {
+        const token = await registerForPushNotifications();
+        if (token) {
+          await savePushToken(user.id, token).catch(console.error);
+        }
+      }
 
-      await scheduleStreakReminder().catch(console.error);
-      await scheduleDailyQuestReminder().catch(console.error);
+      // ✅ Les rappels locaux (streak + quêtes) fonctionnent en Expo Go iOS
+      await scheduleStreakReminder().catch(() => {});
+      await scheduleDailyQuestReminder().catch(() => {});
     })();
 
-    // Navigation à partir d'un tap sur notification
+    // Navigation au tap sur notification
     responseListenerRef.current = Notifications.addNotificationResponseReceivedListener(
       (response) => {
         const type = response.notification.request.content.data?.type as string | undefined;

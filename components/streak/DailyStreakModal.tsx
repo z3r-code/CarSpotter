@@ -17,7 +17,7 @@ import { StreakStatus } from '../../services/streakService';
 
 interface Props {
   visible:      boolean;
-  streakStatus: StreakStatus;
+  streakStatus: StreakStatus | null; // ✅ accepté null — le parent gère le guard
   isClaiming:   boolean;
   onClaim:      () => void;
   onDismiss:    () => void;
@@ -37,8 +37,8 @@ export function DailyStreakModal({
 
   useEffect(() => {
     if (visible) {
-      scale.value   = withSpring(1,   { damping: 14, stiffness: 120 });
-      opacity.value = withSpring(1,   { damping: 20 });
+      scale.value   = withSpring(1,    { damping: 14, stiffness: 120 });
+      opacity.value = withSpring(1,    { damping: 20 });
     } else {
       scale.value   = withSpring(0.85);
       opacity.value = withSpring(0);
@@ -50,6 +50,9 @@ export function DailyStreakModal({
     opacity:   opacity.value,
   }));
 
+  // ✅ Guard null — ne jamais crasher si streakStatus n'est pas encore chargé
+  if (!streakStatus) return null;
+
   const { claimedToday, streakCount, nextReward, longestStreak } = streakStatus;
   const nextMilestone = MILESTONES.find(m => m > streakCount) ?? 30;
   const progress      = Math.min((streakCount / nextMilestone) * 100, 100);
@@ -60,7 +63,7 @@ export function DailyStreakModal({
         <Animated.View style={[styles.card, cardStyle]}>
 
           {/* Icône + titre */}
-          <Text style={styles.fire}>🔥</Text>
+          <Text style={styles.fire}>{"\uD83D\uDD25"}</Text>
           <Text style={styles.title}>
             {claimedToday
               ? `${streakCount} jour${streakCount > 1 ? 's' : ''} de streak !`
@@ -69,7 +72,7 @@ export function DailyStreakModal({
           <Text style={styles.subtitle}>
             {claimedToday
               ? 'Reviens demain pour continuer ta série !'
-              : `Série actuelle : ${streakCount} jour${streakCount > 1 ? 's' : ''}`}
+              : `Série actuelle\u00a0: ${streakCount} jour${streakCount > 1 ? 's' : ''}`}
           </Text>
 
           {/* Barre de progression vers le prochain palier */}
@@ -79,7 +82,7 @@ export function DailyStreakModal({
             </View>
             <Text style={styles.progressLabel}>
               Prochain palier : Jour {nextMilestone}
-              {longestStreak > 0 ? `  ·  Record : ${longestStreak}j` : ''}
+              {longestStreak > 0 ? `  \u00b7  Record\u00a0: ${longestStreak}j` : ''}
             </Text>
           </View>
 
@@ -97,7 +100,7 @@ export function DailyStreakModal({
           {/* CTA */}
           {claimedToday ? (
             <TouchableOpacity style={styles.closeBtn} onPress={onDismiss} activeOpacity={0.8}>
-              <Text style={styles.closeBtnText}>Super, à demain ! 👋</Text>
+              <Text style={styles.closeBtnText}>Super, \u00e0 demain ! {"\uD83D\uDC4B"}</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
@@ -125,66 +128,70 @@ export function DailyStreakModal({
 
 const styles = StyleSheet.create({
   backdrop: {
-    flex: 1,
+    flex:            1,
     backgroundColor: 'rgba(0,0,0,0.75)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
+    justifyContent:  'center',
+    alignItems:      'center',
+    padding:         24,
   },
   card: {
     backgroundColor: C.surface,
-    borderRadius: 24,
-    padding: 28,
-    width: '100%',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: C.borderStrong,
+    borderRadius:    24,
+    padding:         28,
+    width:           '100%',
+    alignItems:      'center',
+    borderWidth:     1,
+    borderColor:     C.borderStrong,
   },
   fire:     { fontSize: 52, marginBottom: 8 },
   title:    { color: C.textPrimary, fontSize: 24, fontWeight: '900', marginBottom: 6, textAlign: 'center' },
   subtitle: { color: C.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 },
+
   progressWrap: { width: '100%', marginBottom: 20 },
   progressBg:   { height: 6, backgroundColor: C.surfaceTop, borderRadius: 3, overflow: 'hidden', marginBottom: 6 },
   progressFill: { height: '100%', backgroundColor: C.cyan, borderRadius: 3 },
   progressLabel: { color: C.textTertiary, fontSize: 11, textAlign: 'right' },
+
   rewardBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             14,
     backgroundColor: C.surfaceHigh,
-    borderRadius: 14,
-    padding: 16,
-    width: '100%',
-    marginBottom: 22,
-    borderWidth: 1,
-    borderColor: C.border,
+    borderRadius:    14,
+    padding:         16,
+    width:           '100%',
+    marginBottom:    22,
+    borderWidth:     1,
+    borderColor:     C.border,
   },
   rewardEmoji: { fontSize: 32 },
   rewardMeta:  { color: C.textSecondary, fontSize: 11, marginBottom: 2 },
-  rewardLabel: { color: C.textPrimary, fontSize: 15, fontWeight: '700' },
+  rewardLabel: { color: C.textPrimary,   fontSize: 15, fontWeight: '700' },
+
   claimBtn: {
     backgroundColor: C.cyan,
     paddingVertical: 15,
-    borderRadius: 14,
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: 10,
-    minHeight: 50,
-    justifyContent: 'center',
+    borderRadius:    14,
+    width:           '100%',
+    alignItems:      'center',
+    marginBottom:    10,
+    minHeight:       50,
+    justifyContent:  'center',
   },
   claimBtnDisabled: { opacity: 0.6 },
   claimBtnText: { color: '#000', fontSize: 15, fontWeight: '900', letterSpacing: 0.3 },
+
   closeBtn: {
     backgroundColor: C.surfaceHigh,
     paddingVertical: 15,
-    borderRadius: 14,
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: C.border,
+    borderRadius:    14,
+    width:           '100%',
+    alignItems:      'center',
+    marginBottom:    10,
+    borderWidth:     1,
+    borderColor:     C.border,
   },
   closeBtnText: { color: C.textPrimary, fontSize: 15, fontWeight: '700' },
-  skipBtn:     { paddingVertical: 8 },
-  skipBtnText: { color: C.textTertiary, fontSize: 13 },
+  skipBtn:      { paddingVertical: 8 },
+  skipBtnText:  { color: C.textTertiary, fontSize: 13 },
 });
