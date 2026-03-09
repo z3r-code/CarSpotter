@@ -1,9 +1,15 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
+import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { brandIdFromMake, matchModel } from '../_shared/pokedexMatcher.ts';
 
-const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? '';
+const OPENAI_API_KEY         = Deno.env.get('OPENAI_API_KEY')         ?? '';
+const SUPABASE_URL            = Deno.env.get('SUPABASE_URL')            ?? '';
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+
+const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
@@ -18,13 +24,31 @@ const SYSTEM_PROMPT = `You are an expert automotive AI. Analyze the car in the i
 }
 If no car is clearly visible, respond with: {"error": "no_car_detected"}`;
 
-// Always return HTTP 200 — errors go in the JSON body as { error: "..." }
-// This way supabase.functions.invoke puts everything in `data`, never in `error`
 function ok(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     status: 200,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   });
+}
+
+/** Matche make+model GPT contre le catalogue Pokédex en DB */
+async function resolvePokedexModelId(
+  make: string,
+  model: string,
+): Promise<string | null> {
+  try {
+    const brandId = brandIdFromMake(make);
+    const { data: models, error } = await supabaseAdmin
+      .from('pokedex_models')
+      .select('id, name, aliases, pokedex_families!inner(brand_id)')
+      .eq('pokedex_families.brand_id', brandId);
+
+    if (error || !models?.length) return null;
+    return matchModel(model, models as any);
+  } catch (e) {
+    console.error('[resolvePokedexModelId]', e);
+    return null;
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -37,13 +61,13 @@ Deno.serve(async (req: Request) => {
     if (!image) return ok({ error: 'no_image_provided' });
 
     const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
+      method:  'POST',
       headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        Authorization:  `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model:      'gpt-4o-mini',
         max_tokens: 300,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
@@ -51,11 +75,8 @@ Deno.serve(async (req: Request) => {
             role: 'user',
             content: [
               {
-                type: 'image_url',
-                image_url: {
-                  url: `data:image/jpeg;base64,${image}`,
-                  detail: 'low',
-                },
+                type:      'image_url',
+                image_url: { url: `data:image/jpeg;base64,${image}`, detail: 'low' },
               },
             ],
           },
@@ -66,33 +87,36 @@ Deno.serve(async (req: Request) => {
     const openaiText = await openaiRes.text();
 
     if (!openaiRes.ok) {
-      console.error('OpenAI error:', openaiText);
-      // Parse OpenAI error for a cleaner message
       try {
-        const parsed = JSON.parse(openaiText);
-        return ok({ error: parsed.error?.message ?? openaiText });
+        const p = JSON.parse(openaiText);
+        return ok({ error: p.error?.message ?? openaiText });
       } catch {
         return ok({ error: openaiText });
       }
     }
 
     let openaiData: Record<string, unknown>;
-    try {
-      openaiData = JSON.parse(openaiText);
-    } catch {
-      return ok({ error: 'Failed to parse OpenAI response' });
-    }
+    try { openaiData = JSON.parse(openaiText); }
+    catch { return ok({ error: 'Failed to parse OpenAI response' }); }
 
     const content = (openaiData.choices as any)?.[0]?.message?.content ?? '{"error":"empty_response"}';
 
     let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      return ok({ error: `AI returned non-JSON: ${content}` });
+    try { parsed = JSON.parse(content); }
+    catch { return ok({ error: `AI returned non-JSON: ${content}` }); }
+
+    // ✅ Matching Pokédex si la voiture a été identifiée
+    if (!parsed.error && parsed.make && parsed.model) {
+      parsed.pokedex_model_id = await resolvePokedexModelId(
+        String(parsed.make),
+        String(parsed.model),
+      );
+    } else {
+      parsed.pokedex_model_id = null;
     }
 
     return ok(parsed);
+
   } catch (err) {
     console.error('Edge function crash:', err);
     return ok({ error: String(err) });
