@@ -1,2 +1,2 @@
-[functions.identify-car]
+[functions."identify-car"]
 verify_jwt = false
