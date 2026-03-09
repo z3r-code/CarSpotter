@@ -1,118 +1,157 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 
-export interface ModelEntry {
-  model:      string;
+// ─── Types (miroir du schéma DB) ─────────────────────────────────────
+
+export interface PokedexModel {
+  id:         string;
+  name:       string;
   rarity:     string;
-  photo_url:  string | null;
-  spotted_at: string;
+  is_boss:    boolean;
+  isUnlocked: boolean;
+  spottedAt?: string;
 }
 
-export interface BrandEntry {
-  brand:   string;
-  scanned: number;       // modèles uniques de l'utilisateur
-  total:   number;       // modèles uniques communauté
-  pct:     number;       // 0–1
-  models:  ModelEntry[];
+export interface PokedexFamily {
+  id:      string;
+  name:    string;
+  models:  PokedexModel[];
+  /** Nb de modèles débloqués / total */
+  unlocked: number;
+  total:    number;
 }
 
-interface UsePokedexReturn {
-  brands:       BrandEntry[];
-  isLoading:    boolean;
-  totalScanned: number;
-  totalKnown:   number;
-  refresh:      () => Promise<void>;
+export interface PokedexBrand {
+  id:             string;
+  name:           string;
+  tier:           'commun' | 'rare' | 'legendaire';
+  families:       PokedexFamily[];
+  totalModels:    number;
+  unlockedModels: number;
+  /** 0..1 */
+  progress:       number;
+  /** true si toutes les familles sont complètes */
+  isMaster:       boolean;
 }
 
-export function usePokedex(): UsePokedexReturn {
-  const [brands,    setBrands]    = useState<BrandEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+// ─── Tri ─────────────────────────────────────────────────────────
+const TIER_ORDER: Record<string, number> = { legendaire: 0, rare: 1, commun: 2 };
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
+function sortBrands(a: PokedexBrand, b: PokedexBrand): number {
+  // En tête : marques avec progression > 0
+  if (b.unlockedModels > 0 && a.unlockedModels === 0) return  1;
+  if (a.unlockedModels > 0 && b.unlockedModels === 0) return -1;
+  // Puis par progression décroissante
+  const dp = b.progress - a.progress;
+  if (Math.abs(dp) > 0.001) return dp;
+  // Puis par tier (legendaire > rare > commun)
+  const dt = (TIER_ORDER[a.tier] ?? 3) - (TIER_ORDER[b.tier] ?? 3);
+  if (dt !== 0) return dt;
+  // Enfin alphabétique
+  return a.name.localeCompare(b.name);
+}
+
+// ─── Hook ─────────────────────────────────────────────────────────
+
+export function usePokedex() {
+  const [brands,     setBrands]     = useState<PokedexBrand[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchPokedex = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Spots de l'utilisateur
-      const { data: userSpots, error: uErr } = await supabase
-        .from('spots')
-        .select('make, model, rarity, photo_url, spotted_at')
-        .eq('user_id', user.id);
-      if (uErr) throw uErr;
+      // Tout en parallèle — catalogue + spots user
+      const [
+        { data: brandsRaw },
+        { data: familiesRaw },
+        { data: modelsRaw },
+        { data: spotsRaw },
+      ] = await Promise.all([
+        supabase
+          .from('pokedex_brands')
+          .select('id, name, tier')
+          .order('name'),
+        supabase
+          .from('pokedex_families')
+          .select('id, brand_id, name, sort_order')
+          .order('sort_order'),
+        supabase
+          .from('pokedex_models')
+          .select('id, family_id, name, rarity, is_boss'),
+        supabase
+          .from('spots')
+          .select('pokedex_model_id, spotted_at')
+          .eq('user_id', user.id)
+          .not('pokedex_model_id', 'is', null),
+      ]);
 
-      // Totaux communautaires (toutes marques + modèles)
-      const { data: allSpots, error: aErr } = await supabase
-        .from('spots')
-        .select('make, model');
-      if (aErr) throw aErr;
-
-      // Communauté : brand → Set<modelKey>
-      const communityMap = new Map<string, Set<string>>();
-      for (const s of allSpots ?? []) {
-        const b = normBrand(s.make);
-        if (!communityMap.has(b)) communityMap.set(b, new Set());
-        communityMap.get(b)!.add(normModel(s.model));
-      }
-
-      // Utilisateur : brand → Map<modelKey, ModelEntry>
-      const userMap = new Map<string, Map<string, ModelEntry>>();
-      for (const s of userSpots ?? []) {
-        const b = normBrand(s.make);
-        const mk = normModel(s.model);
-        if (!userMap.has(b)) userMap.set(b, new Map());
-        if (!userMap.get(b)!.has(mk)) {
-          userMap.get(b)!.set(mk, {
-            model:      s.model,
-            rarity:     s.rarity,
-            photo_url:  s.photo_url,
-            spotted_at: s.spotted_at,
-          });
+      // Map model_id → date de premier spot
+      const spotMap = new Map<string, string>();
+      spotsRaw?.forEach(s => {
+        if (s.pokedex_model_id && !spotMap.has(s.pokedex_model_id)) {
+          spotMap.set(s.pokedex_model_id, s.spotted_at);
         }
-      }
+      });
 
-      // Fusion
-      const result: BrandEntry[] = [];
-      for (const [brand, modelsMap] of userMap.entries()) {
-        const total   = communityMap.get(brand)?.size ?? modelsMap.size;
-        const scanned = modelsMap.size;
-        result.push({
-          brand,
-          scanned,
-          total,
-          pct: total > 0 ? scanned / total : 0,
-          models: Array.from(modelsMap.values()).sort(
-            (a, b) => new Date(b.spotted_at).getTime() - new Date(a.spotted_at).getTime(),
-          ),
-        });
-      }
+      const result: PokedexBrand[] = (brandsRaw ?? []).map(brand => {
+        const families: PokedexFamily[] = (familiesRaw ?? [])
+          .filter(f => f.brand_id === brand.id)
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+          .map(family => {
+            const models: PokedexModel[] = (modelsRaw ?? [])
+              .filter(m => m.family_id === family.id)
+              .map(m => ({
+                id:         m.id,
+                name:       m.name,
+                rarity:     m.rarity,
+                is_boss:    m.is_boss,
+                isUnlocked: spotMap.has(m.id),
+                spottedAt:  spotMap.get(m.id),
+              }));
+            const unlocked = models.filter(m => m.isUnlocked).length;
+            return {
+              id:       family.id,
+              name:     family.name,
+              models,
+              unlocked,
+              total:    models.length,
+            };
+          });
 
-      // Tri : complet en premier, puis alphabétique
-      result.sort((a, b) => b.pct - a.pct || a.brand.localeCompare(b.brand));
+        const totalModels    = families.reduce((s, f) => s + f.total, 0);
+        const unlockedModels = families.reduce((s, f) => s + f.unlocked, 0);
+        const progress       = totalModels > 0 ? unlockedModels / totalModels : 0;
 
-      setBrands(result);
+        return {
+          id:             brand.id,
+          name:           brand.name,
+          tier:           brand.tier as PokedexBrand['tier'],
+          families,
+          totalModels,
+          unlockedModels,
+          progress,
+          isMaster:       totalModels > 0 && unlockedModels === totalModels,
+        };
+      });
+
+      setBrands(result.sort(sortBrands));
     } catch (e) {
-      console.error('[usePokedex] error:', e);
+      console.error('[usePokedex]', e);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { fetchPokedex(); }, [fetchPokedex]);
 
-  const totalScanned = brands.reduce((s, b) => s + b.scanned, 0);
-  const totalKnown   = brands.reduce((s, b) => s + b.total,   0);
+  const onRefresh = useCallback(() => fetchPokedex(true), [fetchPokedex]);
 
-  return { brands, isLoading, totalScanned, totalKnown, refresh: load };
-}
-
-function normBrand(make: string): string {
-  return make.trim()
-    .split(/\s+/)
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
-}
-
-function normModel(model: string): string {
-  return model.trim().toLowerCase();
+  return { brands, loading, refreshing, onRefresh };
 }
