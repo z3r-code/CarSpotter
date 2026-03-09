@@ -81,9 +81,9 @@ export default function ScannerScreen() {
   if (!permission.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>Permission cam\u00e9ra requise</Text>
+        <Text style={styles.text}>Permission caméra requise</Text>
         <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Autoriser la cam\u00e9ra</Text>
+          <Text style={styles.buttonText}>Autoriser la caméra</Text>
         </TouchableOpacity>
       </View>
     );
@@ -144,14 +144,25 @@ export default function ScannerScreen() {
         recognizeCar(base64),
       ]);
 
+      // ✅ recognizeCar retourne maintenant aussi pokedex_model_id via l'Edge Function
+      const pokedexModelId = (car as any).pokedex_model_id ?? null;
+
       setScanResult({ ...car, photo_url: photoUrl });
       setShowFlip(true);
       setScansToday(prev => prev + 1);
 
       const { error } = await supabase.from('spots').insert({
-        user_id: user.id, make: car.make, model: car.model, year: car.year,
-        engine: car.engine, horsepower: car.horsepower, rarity: car.rarity,
-        latitude, longitude, photo_url: photoUrl,
+        user_id:          user.id,
+        make:             car.make,
+        model:            car.model,
+        year:             car.year,
+        engine:           car.engine,
+        horsepower:       car.horsepower,
+        rarity:           car.rarity,
+        latitude,
+        longitude,
+        photo_url:        photoUrl,
+        pokedex_model_id: pokedexModelId, // ✅ Nouveau champ Pokédex
       });
 
       if (!error) {
@@ -227,13 +238,13 @@ export default function ScannerScreen() {
       <View style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.resultContainer}>
           <View style={styles.resultAccentLine} />
-          <Text style={styles.successText}>SPOT R\u00c9USSI !</Text>
+          <Text style={styles.successText}>SPOT RÉUSSI !</Text>
 
           <View style={[styles.photoWrapper, { borderColor: getRarityColor(scanResult.rarity) }]}>
             {scanResult.photo_url
               ? <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
               : <View style={styles.resultPhotoPlaceholder}>
-                  <Text style={{ color: C.textSecondary, fontSize: 40 }}>\uD83D\uDE97</Text>
+                  <Text style={{ color: C.textSecondary, fontSize: 40 }}>🚗</Text>
                 </View>
             }
           </View>
@@ -249,7 +260,7 @@ export default function ScannerScreen() {
 
           <View style={styles.card}>
             <Text style={styles.carTitle}>
-              {scanResult.make}{scanResult.year ? ` \u00b7 ${scanResult.year}` : ''}
+              {scanResult.make}{scanResult.year ? ` · ${scanResult.year}` : ''}
             </Text>
             <Text style={styles.carModel}>{scanResult.model}</Text>
             <View style={styles.divider} />
@@ -268,7 +279,7 @@ export default function ScannerScreen() {
           {saved && (
             <View style={styles.savedBanner}>
               <View style={styles.savedRow}>
-                <Text style={styles.savedText}>\u2713 Ajout\u00e9 \u00e0 ton Garage !</Text>
+                <Text style={styles.savedText}>✓ Ajouté à ton Garage !</Text>
                 <View style={styles.savedRewards}>
                   {xpEarned > 0 && (
                     <View style={[styles.rewardPill, { borderColor: C.cyan + '55' }]}>
@@ -277,7 +288,7 @@ export default function ScannerScreen() {
                   )}
                   {coinsEarned > 0 && (
                     <View style={styles.coinsBadge}>
-                      <Text style={styles.coinsText}>+{coinsEarned} \uD83E\uDE99</Text>
+                      <Text style={styles.coinsText}>+{coinsEarned} 🪙</Text>
                     </View>
                   )}
                 </View>
@@ -337,7 +348,7 @@ export default function ScannerScreen() {
         <View style={styles.overlay}>
           <Text style={styles.errorTitle}>Limite atteinte</Text>
           <Text style={styles.errorSubtitle}>
-            {`${MAX_FREE_SCANS_PER_DAY} scans utilis\u00e9s aujourd'hui.\nReviens demain !`}
+            {`${MAX_FREE_SCANS_PER_DAY} scans utilisés aujourd'hui.\nReviens demain !`}
           </Text>
           <TouchableOpacity style={styles.premiumButton}>
             <Text style={styles.premiumButtonText}>Passer Premium</Text>
@@ -350,10 +361,10 @@ export default function ScannerScreen() {
 
       {scanError === 'no_car' && (
         <View style={styles.overlay}>
-          <Text style={styles.errorTitle}>Aucune voiture d\u00e9tect\u00e9e</Text>
-          <Text style={styles.errorSubtitle}>R\u00e9essaie avec une meilleure vue !</Text>
+          <Text style={styles.errorTitle}>Aucune voiture détectée</Text>
+          <Text style={styles.errorSubtitle}>Réessaie avec une meilleure vue !</Text>
           <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>R\u00e9essayer</Text>
+            <Text style={styles.buttonText}>Réessayer</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -363,7 +374,7 @@ export default function ScannerScreen() {
           <Text style={styles.errorTitle}>Erreur</Text>
           <Text style={styles.errorSubtitle}>{debugError}</Text>
           <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>R\u00e9essayer</Text>
+            <Text style={styles.buttonText}>Réessayer</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -384,7 +395,7 @@ export default function ScannerScreen() {
             disabled={scansLeft <= 0}
           >
             <Text style={[styles.scanButtonText, scansLeft <= 0 && { color: C.textTertiary }]}>
-              {scansLeft <= 0 ? 'BLOQU\u00c9' : 'SCANNER'}
+              {scansLeft <= 0 ? 'BLOQUÉ' : 'SCANNER'}
             </Text>
           </TouchableOpacity>
         </View>
