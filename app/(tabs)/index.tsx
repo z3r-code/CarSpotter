@@ -47,8 +47,8 @@ function base64ToUint8Array(base64: string): Uint8Array {
   const chars  = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   const lookup = new Uint8Array(256);
   for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
-  const b64 = base64.replace(/=+$/, '');
-  const len = b64.length;
+  const b64    = base64.replace(/=+$/, '');
+  const len    = b64.length;
   const bufLen = Math.floor(len * 0.75);
   const bytes  = new Uint8Array(bufLen);
   let p = 0;
@@ -69,11 +69,11 @@ export default function ScannerScreen() {
   const [isScanning, setIsScanning]     = useState(false);
   const [scanResult, setScanResult]     = useState<ScanResult | null>(null);
   const [showFlip,   setShowFlip]       = useState(false);
-  const [saved, setSaved]               = useState(false);
+  const [saved,      setSaved]          = useState(false);
   const [coinsEarned, setCoinsEarned]   = useState(0);
   const [xpEarned,    setXpEarned]      = useState(0);
   const [scansToday, setScansToday]     = useState(0);
-  const [scanError, setScanError]       = useState<string | null>(null);
+  const [scanError,  setScanError]      = useState<string | null>(null);
   const [debugError, setDebugError]     = useState<string | null>(null);
   const [isSharing,  setIsSharing]      = useState(false);
   const cameraRef = useRef<CameraView | null>(null);
@@ -158,20 +158,30 @@ export default function ScannerScreen() {
         recognizeCar(base64),
       ]);
 
-      const pokedexModelId = (car as any).pokedex_model_id ?? null;
+      // ✅ pokedex_model_id maintenant typé et retourné par recognizeCar
+      const pokedexModelId = car.pokedex_model_id ?? null;
+
+      console.log(`[scan] ${car.make} ${car.model} -> pokedex_model_id: ${pokedexModelId}`);
 
       setScanResult({ ...car, photo_url: photoUrl });
       setShowFlip(true);
       setScansToday(prev => prev + 1);
 
-      const { error } = await supabase.from('spots').insert({
-        user_id: user.id, make: car.make, model: car.model, year: car.year,
-        engine: car.engine, horsepower: car.horsepower, rarity: car.rarity,
-        latitude, longitude, photo_url: photoUrl,
+      const { error: insertError } = await supabase.from('spots').insert({
+        user_id:          user.id,
+        make:             car.make,
+        model:            car.model,
+        year:             car.year,
+        engine:           car.engine,
+        horsepower:       car.horsepower,
+        rarity:           car.rarity,
+        latitude,
+        longitude,
+        photo_url:        photoUrl,
         pokedex_model_id: pokedexModelId,
       });
 
-      if (!error) {
+      if (!insertError) {
         setSaved(true);
 
         const coins = COINS_PER_RARITY[car.rarity] ?? 1;
@@ -181,7 +191,6 @@ export default function ScannerScreen() {
         const xp = XP_PER_RARITY[car.rarity] ?? 10;
         setXpEarned(xp);
 
-        // Détection level-up : récupère XP actuel avant d'incrémenter
         const { data: profile } = await supabase
           .from('profiles')
           .select('xp')
@@ -196,7 +205,6 @@ export default function ScannerScreen() {
           }
         }
 
-        // ✅ rpc retourne { data, error } — pas une Promise chainable avec .catch
         const { error: xpError } = await supabase.rpc('increment_xp', {
           user_id: user.id,
           amount:  xp,
@@ -215,7 +223,7 @@ export default function ScannerScreen() {
           .catch(e => console.log('Daily quest update error:', e));
 
       } else {
-        console.log('Insert error:', error.message);
+        console.log('[scan] Insert error:', insertError.message);
       }
 
     } catch (err) {
@@ -434,7 +442,7 @@ export default function ScannerScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+  container:  { flex: 1, backgroundColor: '#000' },
   viewfinder: { position: 'absolute', top: '25%', left: '10%', right: '10%', bottom: '30%' },
   cornerTL: { position: 'absolute', top: 0, left: 0, width: 34, height: 34, borderTopWidth: 3, borderLeftWidth: 3, borderColor: SCAN_RED, borderTopLeftRadius: 2 },
   cornerTR: { position: 'absolute', top: 0, right: 0, width: 34, height: 34, borderTopWidth: 3, borderRightWidth: 3, borderColor: SCAN_RED, borderTopRightRadius: 2 },
@@ -442,47 +450,47 @@ const styles = StyleSheet.create({
   cornerBR: { position: 'absolute', bottom: 0, right: 0, width: 34, height: 34, borderBottomWidth: 3, borderRightWidth: 3, borderColor: SCAN_RED, borderBottomRightRadius: 2 },
   scanLine: { position: 'absolute', left: 12, right: 12, top: '50%', height: 1, backgroundColor: SCAN_RED_DIM },
   quotaBanner: { position: 'absolute', top: 60, left: 0, right: 0, alignItems: 'center' },
-  quotaText: { backgroundColor: 'rgba(0,0,0,0.65)', color: '#fff', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, fontSize: 13, fontWeight: '600', overflow: 'hidden' },
-  bottomBar: { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center' },
-  hint:      { color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 18 },
-  scanButton: { backgroundColor: SCAN_RED, paddingVertical: 18, paddingHorizontal: 56, borderRadius: 14, shadowColor: SCAN_RED, shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 4 }, elevation: 10 },
+  quotaText:   { backgroundColor: 'rgba(0,0,0,0.65)', color: '#fff', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, fontSize: 13, fontWeight: '600', overflow: 'hidden' },
+  bottomBar:   { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center' },
+  hint:        { color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 18 },
+  scanButton:  { backgroundColor: SCAN_RED, paddingVertical: 18, paddingHorizontal: 56, borderRadius: 14, shadowColor: SCAN_RED, shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 4 }, elevation: 10 },
   scanButtonDisabled: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, shadowOpacity: 0 },
-  scanButtonText: { fontSize: 18, fontWeight: '900', color: '#fff', letterSpacing: 2 },
-  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.84)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  scanButtonText:     { fontSize: 18, fontWeight: '900', color: '#fff', letterSpacing: 2 },
+  overlay:     { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.84)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   scanningText:  { color: SCAN_RED, fontSize: 18, fontWeight: 'bold', marginTop: 20, letterSpacing: 1 },
   errorTitle:    { color: '#fff', fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 12 },
   errorSubtitle: { color: C.textSecondary, fontSize: 13, textAlign: 'center', marginBottom: 28, lineHeight: 20 },
-  premiumButton: { backgroundColor: C.legendary, paddingVertical: 15, paddingHorizontal: 44, borderRadius: 12, marginBottom: 14 },
+  premiumButton:     { backgroundColor: C.legendary, paddingVertical: 15, paddingHorizontal: 44, borderRadius: 12, marginBottom: 14 },
   premiumButtonText: { fontSize: 17, fontWeight: 'bold', color: '#000' },
   ghostButton:       { paddingVertical: 10 },
   ghostButtonText:   { color: C.textSecondary, fontSize: 14 },
-  resultContainer: { flexGrow: 1, backgroundColor: C.bg, alignItems: 'center', padding: 24, paddingTop: 70 },
+  resultContainer:  { flexGrow: 1, backgroundColor: C.bg, alignItems: 'center', padding: 24, paddingTop: 70 },
   resultAccentLine: { width: 48, height: 2, backgroundColor: C.cyan, borderRadius: 1, marginBottom: 20 },
-  successText:    { color: C.cyan, fontSize: 26, fontWeight: '900', marginBottom: 20, letterSpacing: 2 },
-  photoWrapper:   { width: '100%', borderRadius: 14, overflow: 'hidden', borderWidth: 2, marginBottom: 16 },
-  resultPhoto:    { width: '100%', height: 220 },
+  successText:   { color: C.cyan, fontSize: 26, fontWeight: '900', marginBottom: 20, letterSpacing: 2 },
+  photoWrapper:  { width: '100%', borderRadius: 14, overflow: 'hidden', borderWidth: 2, marginBottom: 16 },
+  resultPhoto:   { width: '100%', height: 220 },
   resultPhotoPlaceholder: { width: '100%', height: 220, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center' },
-  rarityBadge:    { paddingHorizontal: 20, paddingVertical: 6, borderRadius: 8, marginBottom: 20, borderWidth: 1 },
-  rarityText:     { fontWeight: 'bold', fontSize: 12, letterSpacing: 2 },
-  card: { backgroundColor: C.surface, borderRadius: 14, padding: 22, width: '100%', borderWidth: 1, borderColor: C.border, marginBottom: 20 },
-  carTitle:  { color: C.textSecondary, fontSize: 16, fontWeight: '600' },
-  carModel:  { color: C.textPrimary, fontSize: 36, fontWeight: 'bold', marginBottom: 16 },
-  divider:   { height: 1, backgroundColor: C.border, marginBottom: 16 },
-  specRow:   { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  specLabel: { color: C.textSecondary, fontSize: 14 },
-  specValue: { color: C.textPrimary, fontSize: 14, fontWeight: '600' },
-  savedBanner: { backgroundColor: C.cyanSoft, borderWidth: 1, borderColor: C.cyan + '55', borderRadius: 10, padding: 14, width: '100%', marginBottom: 16 },
-  savedRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  savedText:   { color: C.cyan, fontSize: 15, fontWeight: '700' },
-  savedRewards: { flexDirection: 'row', gap: 6 },
-  rewardPill:   { backgroundColor: C.surface, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1 },
+  rarityBadge:   { paddingHorizontal: 20, paddingVertical: 6, borderRadius: 8, marginBottom: 20, borderWidth: 1 },
+  rarityText:    { fontWeight: 'bold', fontSize: 12, letterSpacing: 2 },
+  card:          { backgroundColor: C.surface, borderRadius: 14, padding: 22, width: '100%', borderWidth: 1, borderColor: C.border, marginBottom: 20 },
+  carTitle:      { color: C.textSecondary, fontSize: 16, fontWeight: '600' },
+  carModel:      { color: C.textPrimary, fontSize: 36, fontWeight: 'bold', marginBottom: 16 },
+  divider:       { height: 1, backgroundColor: C.border, marginBottom: 16 },
+  specRow:       { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+  specLabel:     { color: C.textSecondary, fontSize: 14 },
+  specValue:     { color: C.textPrimary, fontSize: 14, fontWeight: '600' },
+  savedBanner:   { backgroundColor: C.cyanSoft, borderWidth: 1, borderColor: C.cyan + '55', borderRadius: 10, padding: 14, width: '100%', marginBottom: 16 },
+  savedRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  savedText:     { color: C.cyan, fontSize: 15, fontWeight: '700' },
+  savedRewards:  { flexDirection: 'row', gap: 6 },
+  rewardPill:    { backgroundColor: C.surface, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1 },
   rewardPillText: { fontSize: 12, fontWeight: '900' },
-  coinsBadge:  { backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: C.border },
-  coinsText:   { color: C.legendary, fontSize: 14, fontWeight: '900' },
-  actionsRow:  { width: '100%', gap: 12 },
-  shareButton: { borderWidth: 1.5, padding: 16, borderRadius: 12, width: '100%', alignItems: 'center', backgroundColor: 'transparent' },
+  coinsBadge:    { backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: C.border },
+  coinsText:     { color: C.legendary, fontSize: 14, fontWeight: '900' },
+  actionsRow:    { width: '100%', gap: 12 },
+  shareButton:   { borderWidth: 1.5, padding: 16, borderRadius: 12, width: '100%', alignItems: 'center', backgroundColor: 'transparent' },
   shareButtonText: { fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
-  button: { backgroundColor: SCAN_RED, padding: 16, borderRadius: 12, width: '100%', alignItems: 'center', shadowColor: SCAN_RED, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
-  buttonText: { fontSize: 16, fontWeight: 'bold', color: '#fff', letterSpacing: 1 },
-  text: { color: C.textPrimary, fontSize: 16, textAlign: 'center', marginBottom: 20 },
+  button:        { backgroundColor: SCAN_RED, padding: 16, borderRadius: 12, width: '100%', alignItems: 'center', shadowColor: SCAN_RED, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
+  buttonText:    { fontSize: 16, fontWeight: 'bold', color: '#fff', letterSpacing: 1 },
+  text:          { color: C.textPrimary, fontSize: 16, textAlign: 'center', marginBottom: 20 },
 });

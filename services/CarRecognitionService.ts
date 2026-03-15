@@ -1,7 +1,6 @@
 import { supabase } from '../supabase';
 import { CarIdentification, RarityLevel } from '../types/car.types';
 
-// Change back to 3 for production
 export const MAX_FREE_SCANS_PER_DAY = 10;
 
 function getRarityFromCar(make: string, horsepower: number): RarityLevel {
@@ -20,11 +19,12 @@ export async function checkScanQuota(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // ✅ La colonne s'appelle created_at dans spots, pas spotted_at
   const { count, error } = await supabase
     .from('spots')
     .select('*', { count: 'exact', head: true })
     .eq('user_id', userId)
-    .gte('spotted_at', today.toISOString());
+    .gte('created_at', today.toISOString());
 
   if (error) {
     console.warn('checkScanQuota error (fail-open):', error.message || error.code);
@@ -35,7 +35,9 @@ export async function checkScanQuota(
   return { canScan: scansToday < MAX_FREE_SCANS_PER_DAY, scansToday };
 }
 
-export async function recognizeCar(base64Image: string): Promise<CarIdentification> {
+export async function recognizeCar(
+  base64Image: string
+): Promise<CarIdentification & { pokedex_model_id: string | null }> {
   const { data, error } = await supabase.functions.invoke('identify-car', {
     body: { image: base64Image },
   });
@@ -54,18 +56,20 @@ export async function recognizeCar(base64Image: string): Promise<CarIdentificati
     throw new Error(`Edge Function: ${errorMsg}`);
   }
 
-  if (!data) throw new Error('Edge Function returned null data');
-  if (data.error) throw new Error(data.error);
+  if (!data)        throw new Error('Edge Function returned null data');
+  if (data.error)   throw new Error(data.error);
 
   const rarity = getRarityFromCar(data.make ?? '', data.horsepower ?? 0);
 
   return {
-    make: data.make ?? 'Inconnu',
-    model: data.model ?? 'Inconnu',
-    year: data.year ?? null,
-    engine: data.engine ?? 'N/A',
-    horsepower: data.horsepower ?? 0,
+    make:             data.make        ?? 'Inconnu',
+    model:            data.model       ?? 'Inconnu',
+    year:             data.year        ?? null,
+    engine:           data.engine      ?? 'N/A',
+    horsepower:       data.horsepower  ?? 0,
     rarity,
-    confidence: data.confidence ?? 70,
+    confidence:       data.confidence  ?? 70,
+    // ✅ On retourne explicitement pokedex_model_id depuis la réponse de l'Edge Function
+    pokedex_model_id: data.pokedex_model_id ?? null,
   };
 }
