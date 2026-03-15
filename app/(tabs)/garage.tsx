@@ -28,7 +28,7 @@ type Spot = {
   photo_url: string | null;
   latitude: number | null;
   longitude: number | null;
-  spotted_at: string;
+  created_at: string;
 };
 
 export default function GarageScreen() {
@@ -37,19 +37,21 @@ export default function GarageScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [totalSpots, setTotalSpots] = useState(0);
   const [totalXp, setTotalXp]       = useState(0);
-  const [selectedSpot, setSelectedSpot]   = useState<Spot | null>(null);
-  const [levelInfo, setLevelInfo]         = useState<LevelInfo>(getLevelInfo(0));
+  const [selectedSpot, setSelectedSpot]       = useState<Spot | null>(null);
+  const [levelInfo, setLevelInfo]             = useState<LevelInfo>(getLevelInfo(0));
   const [levelCardVisible, setLevelCardVisible] = useState(false);
-  const [username, setUsername]     = useState('Spotter');
+  const [username, setUsername]       = useState('Spotter');
   const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set());
 
   const fetchSpots = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     setUsername(user.email?.split('@')[0] ?? 'Spotter');
+    // ✅ created_at (pas spotted_at)
     const { data, error } = await supabase
       .from('spots').select('*').eq('user_id', user.id)
-      .order('spotted_at', { ascending: false });
+      .order('created_at', { ascending: false });
+    if (error) { console.log('[garage] fetch error:', error.message); }
     if (!error && data) {
       setSpots(data);
       setTotalSpots(data.length);
@@ -77,8 +79,8 @@ export default function GarageScreen() {
   const getRarityLabel = (rarity: string) => {
     switch (rarity) {
       case 'platine':    return 'PLATINE';
-      case 'legendaire': return 'L\u00c9GENDAIRE';
-      case 'epique':     return '\u00c9PIQUE';
+      case 'legendaire': return 'LÉGENDAIRE';
+      case 'epique':     return 'ÉPIQUE';
       case 'rare':       return 'RARE';
       default:           return 'COMMUN';
     }
@@ -122,13 +124,12 @@ export default function GarageScreen() {
         username={username}
       />
 
-      {/* Spot Detail Modal */}
       <Modal visible={selectedSpot !== null} animationType="slide"
         presentationStyle="pageSheet" onRequestClose={() => setSelectedSpot(null)}>
         {selectedSpot && (
           <View style={styles.modalContainer}>
             <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedSpot(null)}>
-              <Text style={styles.modalCloseText}>\u2715</Text>
+              <Text style={styles.modalCloseText}>✕</Text>
             </TouchableOpacity>
             <ScrollView showsVerticalScrollIndicator={false}>
               {selectedSpot.photo_url && !brokenImages.has(selectedSpot.id)
@@ -142,7 +143,7 @@ export default function GarageScreen() {
               <View style={styles.modalContent}>
                 <View style={[styles.modalAccentLine, { backgroundColor: getRarityColor(selectedSpot.rarity) }]} />
                 <Text style={styles.modalMake}>
-                  {selectedSpot.make}{selectedSpot.year ? ` \u00b7 ${selectedSpot.year}` : ''}
+                  {selectedSpot.make}{selectedSpot.year ? ` · ${selectedSpot.year}` : ''}
                 </Text>
                 <Text style={styles.modalModel}>{selectedSpot.model}</Text>
                 <View style={[styles.modalBadge, {
@@ -154,18 +155,16 @@ export default function GarageScreen() {
                   </Text>
                 </View>
                 <View style={styles.modalSpecs}>
-                  {[
-                    ['Moteur',      selectedSpot.engine,                           null],
-                    ['Puissance',   `${selectedSpot.horsepower} ch`,               null],
-                    ['XP gagn\u00e9',`+${getXpForRarity(selectedSpot.rarity)} XP`, getRarityColor(selectedSpot.rarity)],
-                    ['Spott\u00e9 le', formatDate(selectedSpot.spotted_at),         null],
-                  ].map(([label, value, color], i, arr) => (
-                    <View key={String(label)}>
+                  {([
+                    ['Moteur',       selectedSpot.engine,                              null],
+                    ['Puissance',    `${selectedSpot.horsepower} ch`,                  null],
+                    ['XP gagné',     `+${getXpForRarity(selectedSpot.rarity)} XP`,    getRarityColor(selectedSpot.rarity)],
+                    ['Spotté le',    formatDate(selectedSpot.created_at),              null],
+                  ] as [string, string, string | null][]).map(([label, value, color], i, arr) => (
+                    <View key={label}>
                       <View style={styles.modalSpecRow}>
                         <Text style={styles.modalSpecLabel}>{label}</Text>
-                        <Text style={[styles.modalSpecValue, color ? { color: String(color) } : {}]}>
-                          {value}
-                        </Text>
+                        <Text style={[styles.modalSpecValue, color ? { color } : {}]}>{value}</Text>
                       </View>
                       {i < arr.length - 1 && <View style={styles.modalDivider} />}
                     </View>
@@ -188,13 +187,12 @@ export default function GarageScreen() {
         )}
       </Modal>
 
-      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.title}>Mon Garage</Text>
           <View style={styles.headerAccentLine} />
           <Text style={styles.subtitle}>
-            {totalSpots} voiture{totalSpots > 1 ? 's' : ''} spott\u00e9e{totalSpots > 1 ? 's' : ''}
+            {totalSpots} voiture{totalSpots > 1 ? 's' : ''} spottée{totalSpots > 1 ? 's' : ''}
           </Text>
         </View>
         <TouchableOpacity style={styles.headerRight}
@@ -217,15 +215,13 @@ export default function GarageScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Qu\u00eate active s\u00e9quentielle */}
       <ActiveQuestCard spots={spots} totalXp={totalXp} />
 
-      {/* Liste des spots */}
       {spots.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={styles.emptyIcon}>\uD83D\uDE97</Text>
+          <Text style={styles.emptyIcon}>🚗</Text>
           <Text style={styles.emptyText}>Ton garage est vide !</Text>
-          <Text style={styles.emptySubtext}>Va scanner ta premi\u00e8re voiture</Text>
+          <Text style={styles.emptySubtext}>Va scanner ta première voiture</Text>
         </View>
       ) : (
         <FlatList
@@ -260,7 +256,7 @@ export default function GarageScreen() {
                 <View style={styles.spotFooter}>
                   <Text style={styles.spotSpec}>{item.horsepower} ch</Text>
                   <Text style={styles.spotSpec}>{item.engine}</Text>
-                  <Text style={styles.spotDate}>{formatDate(item.spotted_at)}</Text>
+                  <Text style={styles.spotDate}>{formatDate(item.created_at)}</Text>
                 </View>
               </View>
             </TouchableOpacity>
