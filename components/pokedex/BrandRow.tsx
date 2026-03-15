@@ -4,6 +4,7 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from 'react-native-reanimated';
+import { useEffect } from 'react';
 import { C } from '../../constants/colors';
 import { PokedexBrand } from '../../hooks/usePokedex';
 
@@ -14,7 +15,12 @@ interface Props {
 
 export function BrandRow({ brand, onPress }: Props) {
   const barW = useSharedValue(0);
-  barW.value = withSpring(brand.progress, { damping: 16, stiffness: 70 });
+
+  // ✅ Ne jamais écrire dans .value pendant le render — utiliser useEffect
+  useEffect(() => {
+    barW.value = withSpring(brand.progress, { damping: 16, stiffness: 70 });
+  }, [brand.progress]);
+
   const barStyle = useAnimatedStyle(() => ({ width: `${barW.value * 100}%` as any }));
 
   const pct      = Math.round(brand.progress * 100);
@@ -25,12 +31,10 @@ export function BrandRow({ brand, onPress }: Props) {
   return (
     <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.75}>
 
-      {/* Avatar initiale */}
       <View style={[styles.avatar, { borderColor: barColor + '66' }]}>
         <Text style={[styles.avatarText, { color: barColor }]}>{initial}</Text>
       </View>
 
-      {/* Contenu */}
       <View style={styles.content}>
         <View style={styles.topRow}>
           <Text style={styles.brandName}>{brand.name}</Text>
@@ -41,9 +45,7 @@ export function BrandRow({ brand, onPress }: Props) {
         </View>
 
         <View style={styles.progressBg}>
-          <Animated.View
-            style={[styles.progressFill, barStyle, { backgroundColor: barColor }]}
-          />
+          <Animated.View style={[styles.progressFill, barStyle, { backgroundColor: barColor }]} />
         </View>
 
         <Text style={styles.countLabel}>
@@ -77,8 +79,8 @@ const styles = StyleSheet.create({
     justifyContent:  'center',
     alignItems:      'center',
   },
-  avatarText:  { fontSize: 18, fontWeight: '900' },
-  content:     { flex: 1 },
+  avatarText:   { fontSize: 18, fontWeight: '900' },
+  content:      { flex: 1 },
   topRow: {
     flexDirection:  'row',
     justifyContent: 'space-between',

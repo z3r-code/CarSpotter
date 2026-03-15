@@ -32,7 +32,6 @@ import { useFloatingRewards } from '../../hooks/useFloatingRewards';
 const SCAN_RED     = '#FF2D2D';
 const SCAN_RED_DIM = '#FF2D2D44';
 
-// Seuils XP pour chaque niveau (niveau = index + 1)
 const LEVEL_THRESHOLDS = [0, 100, 250, 500, 900, 1400, 2000, 2800, 3800, 5000];
 
 function getLevelFromXp(xp: number): number {
@@ -175,16 +174,14 @@ export default function ScannerScreen() {
       if (!error) {
         setSaved(true);
 
-        // 🪙 Coins
         const coins = COINS_PER_RARITY[car.rarity] ?? 1;
         setCoinsEarned(coins);
         await awardCoins(user.id, coins);
 
-        // ✨ XP + détection level-up
         const xp = XP_PER_RARITY[car.rarity] ?? 10;
         setXpEarned(xp);
 
-        // Vérifie si passage de niveau
+        // Détection level-up : récupère XP actuel avant d'incrémenter
         const { data: profile } = await supabase
           .from('profiles')
           .select('xp')
@@ -195,13 +192,16 @@ export default function ScannerScreen() {
           const oldLevel = getLevelFromXp(profile.xp ?? 0);
           const newLevel = getLevelFromXp((profile.xp ?? 0) + xp);
           if (newLevel > oldLevel) {
-            // Délai pour laisser la card flip se terminer
             setTimeout(() => levelUpEmitter.emit('levelUp', { newLevel }), 2200);
           }
         }
 
-        // 📊 XP update en DB
-        await supabase.rpc('increment_xp', { user_id: user.id, amount: xp }).catch(() => {});
+        // ✅ rpc retourne { data, error } — pas une Promise chainable avec .catch
+        const { error: xpError } = await supabase.rpc('increment_xp', {
+          user_id: user.id,
+          amount:  xp,
+        });
+        if (xpError) console.log('XP increment error:', xpError.message);
 
         setTimeout(() => {
           triggerReward('xp',    xp);
@@ -210,9 +210,7 @@ export default function ScannerScreen() {
 
         updateDailyQuestsOnScan(user.id, { rarity: car.rarity, make: car.make })
           .then(completedIds => {
-            if (completedIds.length > 0) {
-              setTimeout(() => triggerReward('quest', 0), 1400);
-            }
+            if (completedIds.length > 0) setTimeout(() => triggerReward('quest', 0), 1400);
           })
           .catch(e => console.log('Daily quest update error:', e));
 
@@ -272,7 +270,6 @@ export default function ScannerScreen() {
 
   const scansLeft = MAX_FREE_SCANS_PER_DAY - scansToday;
 
-  // ── Résultat ─────────────────────────────────────────────
   if (scanResult) {
     const rarityColor = getRarityColor(scanResult.rarity);
     return (
@@ -290,19 +287,12 @@ export default function ScannerScreen() {
             }
           </View>
 
-          <View style={[styles.rarityBadge, {
-            backgroundColor: rarityColor + '33',
-            borderColor: rarityColor,
-          }]}>
-            <Text style={[styles.rarityText, { color: rarityColor }]}>
-              {scanResult.rarity.toUpperCase()}
-            </Text>
+          <View style={[styles.rarityBadge, { backgroundColor: rarityColor + '33', borderColor: rarityColor }]}>
+            <Text style={[styles.rarityText, { color: rarityColor }]}>{scanResult.rarity.toUpperCase()}</Text>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.carTitle}>
-              {scanResult.make}{scanResult.year ? ` · ${scanResult.year}` : ''}
-            </Text>
+            <Text style={styles.carTitle}>{scanResult.make}{scanResult.year ? ` · ${scanResult.year}` : ''}</Text>
             <Text style={styles.carModel}>{scanResult.model}</Text>
             <View style={styles.divider} />
             {([
@@ -337,7 +327,6 @@ export default function ScannerScreen() {
             </View>
           )}
 
-          {/* Boutons actions */}
           <View style={styles.actionsRow}>
             <TouchableOpacity
               style={[styles.shareButton, { borderColor: rarityColor }]}
@@ -349,35 +338,23 @@ export default function ScannerScreen() {
                 {isSharing ? '...' : '📲 Partager'}
               </Text>
             </TouchableOpacity>
-
             <TouchableOpacity style={styles.button} onPress={resetScan}>
               <Text style={styles.buttonText}>Scanner encore</Text>
             </TouchableOpacity>
           </View>
-
         </ScrollView>
 
         {showFlip && (
-          <CardFlipReveal
-            result={scanResult}
-            coinsEarned={coinsEarned}
-            onDismiss={() => setShowFlip(false)}
-          />
+          <CardFlipReveal result={scanResult} coinsEarned={coinsEarned} onDismiss={() => setShowFlip(false)} />
         )}
 
         {rewards.map(item => (
-          <FloatingReward
-            key={item.id}
-            item={item}
-            onComplete={removeReward}
-            bottomOffset={180}
-          />
+          <FloatingReward key={item.id} item={item} onComplete={removeReward} bottomOffset={180} />
         ))}
       </View>
     );
   }
 
-  // ── Caméra ─────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <CameraView style={StyleSheet.absoluteFillObject} facing="back" ref={cameraRef} />
@@ -401,9 +378,7 @@ export default function ScannerScreen() {
       {scanError === 'quota_exceeded' && (
         <View style={styles.overlay}>
           <Text style={styles.errorTitle}>Limite atteinte</Text>
-          <Text style={styles.errorSubtitle}>
-            {`${MAX_FREE_SCANS_PER_DAY} scans utilisés aujourd'hui.\nReviens demain !`}
-          </Text>
+          <Text style={styles.errorSubtitle}>{`${MAX_FREE_SCANS_PER_DAY} scans utilisés aujourd'hui.\nReviens demain !`}</Text>
           <TouchableOpacity style={styles.premiumButton}>
             <Text style={styles.premiumButtonText}>Passer Premium</Text>
           </TouchableOpacity>
@@ -468,8 +443,8 @@ const styles = StyleSheet.create({
   scanLine: { position: 'absolute', left: 12, right: 12, top: '50%', height: 1, backgroundColor: SCAN_RED_DIM },
   quotaBanner: { position: 'absolute', top: 60, left: 0, right: 0, alignItems: 'center' },
   quotaText: { backgroundColor: 'rgba(0,0,0,0.65)', color: '#fff', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, fontSize: 13, fontWeight: '600', overflow: 'hidden' },
-  bottomBar:  { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center' },
-  hint:       { color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 18 },
+  bottomBar: { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center' },
+  hint:      { color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 18 },
   scanButton: { backgroundColor: SCAN_RED, paddingVertical: 18, paddingHorizontal: 56, borderRadius: 14, shadowColor: SCAN_RED, shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 4 }, elevation: 10 },
   scanButtonDisabled: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, shadowOpacity: 0 },
   scanButtonText: { fontSize: 18, fontWeight: '900', color: '#fff', letterSpacing: 2 },
