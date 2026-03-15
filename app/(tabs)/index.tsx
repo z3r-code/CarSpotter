@@ -23,12 +23,26 @@ import { COINS_PER_RARITY } from '../../constants/coins';
 import { XP_PER_RARITY } from '../../constants/xp';
 import { awardCoins } from '../../services/CoinsService';
 import { updateDailyQuestsOnScan } from '../../services/dailyQuestService';
+import { shareSpotCard } from '../../services/shareCardService';
+import { levelUpEmitter } from '../../services/levelUpEmitter';
 import { CardFlipReveal } from '../../components/scan/CardFlipReveal';
 import { FloatingReward } from '../../components/ui/FloatingRewards';
 import { useFloatingRewards } from '../../hooks/useFloatingRewards';
 
 const SCAN_RED     = '#FF2D2D';
 const SCAN_RED_DIM = '#FF2D2D44';
+
+// Seuils XP pour chaque niveau (niveau = index + 1)
+const LEVEL_THRESHOLDS = [0, 100, 250, 500, 900, 1400, 2000, 2800, 3800, 5000];
+
+function getLevelFromXp(xp: number): number {
+  let level = 1;
+  for (let i = 0; i < LEVEL_THRESHOLDS.length; i++) {
+    if (xp >= LEVEL_THRESHOLDS[i]) level = i + 1;
+    else break;
+  }
+  return level;
+}
 
 function base64ToUint8Array(base64: string): Uint8Array {
   const chars  = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -62,6 +76,7 @@ export default function ScannerScreen() {
   const [scansToday, setScansToday]     = useState(0);
   const [scanError, setScanError]       = useState<string | null>(null);
   const [debugError, setDebugError]     = useState<string | null>(null);
+  const [isSharing,  setIsSharing]      = useState(false);
   const cameraRef = useRef<CameraView | null>(null);
 
   const { rewards, triggerReward, removeReward } = useFloatingRewards();
@@ -144,7 +159,6 @@ export default function ScannerScreen() {
         recognizeCar(base64),
       ]);
 
-      // ✅ recognizeCar retourne maintenant aussi pokedex_model_id via l'Edge Function
       const pokedexModelId = (car as any).pokedex_model_id ?? null;
 
       setScanResult({ ...car, photo_url: photoUrl });
@@ -152,17 +166,10 @@ export default function ScannerScreen() {
       setScansToday(prev => prev + 1);
 
       const { error } = await supabase.from('spots').insert({
-        user_id:          user.id,
-        make:             car.make,
-        model:            car.model,
-        year:             car.year,
-        engine:           car.engine,
-        horsepower:       car.horsepower,
-        rarity:           car.rarity,
-        latitude,
-        longitude,
-        photo_url:        photoUrl,
-        pokedex_model_id: pokedexModelId, // ✅ Nouveau champ Pokédex
+        user_id: user.id, make: car.make, model: car.model, year: car.year,
+        engine: car.engine, horsepower: car.horsepower, rarity: car.rarity,
+        latitude, longitude, photo_url: photoUrl,
+        pokedex_model_id: pokedexModelId,
       });
 
       if (!error) {
@@ -173,17 +180,34 @@ export default function ScannerScreen() {
         setCoinsEarned(coins);
         await awardCoins(user.id, coins);
 
-        // ✨ XP
+        // ✨ XP + détection level-up
         const xp = XP_PER_RARITY[car.rarity] ?? 10;
         setXpEarned(xp);
 
-        // 📊 Animations flottantes (décalées pour apparaître sur la carte flip)
+        // Vérifie si passage de niveau
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('xp')
+          .eq('id', user.id)
+          .single();
+
+        if (profile) {
+          const oldLevel = getLevelFromXp(profile.xp ?? 0);
+          const newLevel = getLevelFromXp((profile.xp ?? 0) + xp);
+          if (newLevel > oldLevel) {
+            // Délai pour laisser la card flip se terminer
+            setTimeout(() => levelUpEmitter.emit('levelUp', { newLevel }), 2200);
+          }
+        }
+
+        // 📊 XP update en DB
+        await supabase.rpc('increment_xp', { user_id: user.id, amount: xp }).catch(() => {});
+
         setTimeout(() => {
           triggerReward('xp',    xp);
           triggerReward('coins', coins);
         }, 900);
 
-        // 🎯 Mise à jour quêtes journalières
         updateDailyQuestsOnScan(user.id, { rarity: car.rarity, make: car.make })
           .then(completedIds => {
             if (completedIds.length > 0) {
@@ -207,6 +231,22 @@ export default function ScannerScreen() {
       setScanError(msg.includes('no_car_detected') ? 'no_car' : 'generic');
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const handleShare = async () => {
+    if (!scanResult) return;
+    setIsSharing(true);
+    try {
+      await shareSpotCard({
+        make:     scanResult.make,
+        model:    scanResult.model,
+        year:     scanResult.year ?? null,
+        rarity:   scanResult.rarity as any,
+        photoUrl: scanResult.photo_url ?? null,
+      });
+    } finally {
+      setIsSharing(false);
     }
   };
 
@@ -234,13 +274,14 @@ export default function ScannerScreen() {
 
   // ── Résultat ─────────────────────────────────────────────
   if (scanResult) {
+    const rarityColor = getRarityColor(scanResult.rarity);
     return (
       <View style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.resultContainer}>
           <View style={styles.resultAccentLine} />
           <Text style={styles.successText}>SPOT RÉUSSI !</Text>
 
-          <View style={[styles.photoWrapper, { borderColor: getRarityColor(scanResult.rarity) }]}>
+          <View style={[styles.photoWrapper, { borderColor: rarityColor }]}>
             {scanResult.photo_url
               ? <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
               : <View style={styles.resultPhotoPlaceholder}>
@@ -250,10 +291,10 @@ export default function ScannerScreen() {
           </View>
 
           <View style={[styles.rarityBadge, {
-            backgroundColor: getRarityColor(scanResult.rarity) + '33',
-            borderColor: getRarityColor(scanResult.rarity),
+            backgroundColor: rarityColor + '33',
+            borderColor: rarityColor,
           }]}>
-            <Text style={[styles.rarityText, { color: getRarityColor(scanResult.rarity) }]}>
+            <Text style={[styles.rarityText, { color: rarityColor }]}>
               {scanResult.rarity.toUpperCase()}
             </Text>
           </View>
@@ -296,12 +337,26 @@ export default function ScannerScreen() {
             </View>
           )}
 
-          <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>Scanner une autre voiture</Text>
-          </TouchableOpacity>
+          {/* Boutons actions */}
+          <View style={styles.actionsRow}>
+            <TouchableOpacity
+              style={[styles.shareButton, { borderColor: rarityColor }]}
+              onPress={handleShare}
+              disabled={isSharing}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.shareButtonText, { color: rarityColor }]}>
+                {isSharing ? '...' : '📲 Partager'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.button} onPress={resetScan}>
+              <Text style={styles.buttonText}>Scanner encore</Text>
+            </TouchableOpacity>
+          </View>
+
         </ScrollView>
 
-        {/* Card Flip Reveal */}
         {showFlip && (
           <CardFlipReveal
             result={scanResult}
@@ -310,7 +365,6 @@ export default function ScannerScreen() {
           />
         )}
 
-        {/* Floating Rewards — par-dessus tout */}
         {rewards.map(item => (
           <FloatingReward
             key={item.id}
@@ -442,7 +496,7 @@ const styles = StyleSheet.create({
   specRow:   { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
   specLabel: { color: C.textSecondary, fontSize: 14 },
   specValue: { color: C.textPrimary, fontSize: 14, fontWeight: '600' },
-  savedBanner: { backgroundColor: C.cyanSoft, borderWidth: 1, borderColor: C.cyan + '55', borderRadius: 10, padding: 14, width: '100%', marginBottom: 20 },
+  savedBanner: { backgroundColor: C.cyanSoft, borderWidth: 1, borderColor: C.cyan + '55', borderRadius: 10, padding: 14, width: '100%', marginBottom: 16 },
   savedRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   savedText:   { color: C.cyan, fontSize: 15, fontWeight: '700' },
   savedRewards: { flexDirection: 'row', gap: 6 },
@@ -450,6 +504,9 @@ const styles = StyleSheet.create({
   rewardPillText: { fontSize: 12, fontWeight: '900' },
   coinsBadge:  { backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: C.border },
   coinsText:   { color: C.legendary, fontSize: 14, fontWeight: '900' },
+  actionsRow:  { width: '100%', gap: 12 },
+  shareButton: { borderWidth: 1.5, padding: 16, borderRadius: 12, width: '100%', alignItems: 'center', backgroundColor: 'transparent' },
+  shareButtonText: { fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
   button: { backgroundColor: SCAN_RED, padding: 16, borderRadius: 12, width: '100%', alignItems: 'center', shadowColor: SCAN_RED, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
   buttonText: { fontSize: 16, fontWeight: 'bold', color: '#fff', letterSpacing: 1 },
   text: { color: C.textPrimary, fontSize: 16, textAlign: 'center', marginBottom: 20 },
