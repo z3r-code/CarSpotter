@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 
-// ─── Types (miroir du schéma DB) ─────────────────────────────────────
-
 export interface PokedexModel {
   id:         string;
   name:       string;
@@ -16,7 +14,6 @@ export interface PokedexFamily {
   id:      string;
   name:    string;
   models:  PokedexModel[];
-  /** Nb de modèles débloqués / total */
   unlocked: number;
   total:    number;
 }
@@ -28,30 +25,21 @@ export interface PokedexBrand {
   families:       PokedexFamily[];
   totalModels:    number;
   unlockedModels: number;
-  /** 0..1 */
   progress:       number;
-  /** true si toutes les familles sont complètes */
   isMaster:       boolean;
 }
 
-// ─── Tri ─────────────────────────────────────────────────────────
 const TIER_ORDER: Record<string, number> = { legendaire: 0, rare: 1, commun: 2 };
 
 function sortBrands(a: PokedexBrand, b: PokedexBrand): number {
-  // En tête : marques avec progression > 0
   if (b.unlockedModels > 0 && a.unlockedModels === 0) return  1;
   if (a.unlockedModels > 0 && b.unlockedModels === 0) return -1;
-  // Puis par progression décroissante
   const dp = b.progress - a.progress;
   if (Math.abs(dp) > 0.001) return dp;
-  // Puis par tier (legendaire > rare > commun)
   const dt = (TIER_ORDER[a.tier] ?? 3) - (TIER_ORDER[b.tier] ?? 3);
   if (dt !== 0) return dt;
-  // Enfin alphabétique
   return a.name.localeCompare(b.name);
 }
-
-// ─── Hook ─────────────────────────────────────────────────────────
 
 export function usePokedex() {
   const [brands,     setBrands]     = useState<PokedexBrand[]>([]);
@@ -66,36 +54,28 @@ export function usePokedex() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Tout en parallèle — catalogue + spots user
       const [
         { data: brandsRaw },
         { data: familiesRaw },
         { data: modelsRaw },
         { data: spotsRaw },
       ] = await Promise.all([
-        supabase
-          .from('pokedex_brands')
-          .select('id, name, tier')
-          .order('name'),
-        supabase
-          .from('pokedex_families')
-          .select('id, brand_id, name, sort_order')
-          .order('sort_order'),
-        supabase
-          .from('pokedex_models')
-          .select('id, family_id, name, rarity, is_boss'),
+        supabase.from('pokedex_brands').select('id, name, tier').order('name'),
+        supabase.from('pokedex_families').select('id, brand_id, name, sort_order').order('sort_order'),
+        supabase.from('pokedex_models').select('id, family_id, name, rarity, is_boss'),
+        // ✅ La colonne s'appelle created_at dans spots, PAS spotted_at
         supabase
           .from('spots')
-          .select('pokedex_model_id, spotted_at')
+          .select('pokedex_model_id, created_at')
           .eq('user_id', user.id)
           .not('pokedex_model_id', 'is', null),
       ]);
 
-      // Map model_id → date de premier spot
+      // Map model_id → date du premier spot
       const spotMap = new Map<string, string>();
-      spotsRaw?.forEach(s => {
+      (spotsRaw ?? []).forEach((s: any) => {
         if (s.pokedex_model_id && !spotMap.has(s.pokedex_model_id)) {
-          spotMap.set(s.pokedex_model_id, s.spotted_at);
+          spotMap.set(s.pokedex_model_id, s.created_at);
         }
       });
 
@@ -115,28 +95,22 @@ export function usePokedex() {
                 spottedAt:  spotMap.get(m.id),
               }));
             const unlocked = models.filter(m => m.isUnlocked).length;
-            return {
-              id:       family.id,
-              name:     family.name,
-              models,
-              unlocked,
-              total:    models.length,
-            };
+            return { id: family.id, name: family.name, models, unlocked, total: models.length };
           });
 
-        const totalModels    = families.reduce((s, f) => s + f.total, 0);
+        const totalModels    = families.reduce((s, f) => s + f.total,    0);
         const unlockedModels = families.reduce((s, f) => s + f.unlocked, 0);
         const progress       = totalModels > 0 ? unlockedModels / totalModels : 0;
 
         return {
-          id:             brand.id,
-          name:           brand.name,
-          tier:           brand.tier as PokedexBrand['tier'],
+          id:   brand.id,
+          name: brand.name,
+          tier: brand.tier as PokedexBrand['tier'],
           families,
           totalModels,
           unlockedModels,
           progress,
-          isMaster:       totalModels > 0 && unlockedModels === totalModels,
+          isMaster: totalModels > 0 && unlockedModels === totalModels,
         };
       });
 

@@ -2,8 +2,8 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { brandIdFromMake, matchModel } from '../_shared/pokedexMatcher.ts';
 
-const OPENAI_API_KEY         = Deno.env.get('OPENAI_API_KEY')         ?? '';
-const SUPABASE_URL            = Deno.env.get('SUPABASE_URL')            ?? '';
+const OPENAI_API_KEY            = Deno.env.get('OPENAI_API_KEY')            ?? '';
+const SUPABASE_URL              = Deno.env.get('SUPABASE_URL')              ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -26,25 +26,51 @@ If no car is clearly visible, respond with: {"error": "no_car_detected"}`;
 
 function ok(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
-    status: 200,
+    status:  200,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   });
 }
 
-/** Matche make+model GPT contre le catalogue Pokédex en DB */
+/**
+ * Matche make+model GPT contre le catalogue Pokédex.
+ * Stratégie robuste en 2 étapes :
+ * 1. Trouver le brand_id via brandIdFromMake
+ * 2. Charger tous les modèles de ce brand via les families
+ */
 async function resolvePokedexModelId(
   make: string,
   model: string,
 ): Promise<string | null> {
   try {
     const brandId = brandIdFromMake(make);
-    const { data: models, error } = await supabaseAdmin
-      .from('pokedex_models')
-      .select('id, name, aliases, pokedex_families!inner(brand_id)')
-      .eq('pokedex_families.brand_id', brandId);
 
-    if (error || !models?.length) return null;
-    return matchModel(model, models as any);
+    // Étape 1 : récupère les family IDs de cette marque
+    const { data: families, error: famErr } = await supabaseAdmin
+      .from('pokedex_families')
+      .select('id')
+      .eq('brand_id', brandId);
+
+    if (famErr || !families?.length) {
+      console.log(`[pokedex] No families for brand_id="${brandId}" (make="${make}"`);
+      return null;
+    }
+
+    const familyIds = families.map(f => f.id);
+
+    // Étape 2 : récupère tous les modèles de ces families
+    const { data: models, error: modErr } = await supabaseAdmin
+      .from('pokedex_models')
+      .select('id, name, aliases')
+      .in('family_id', familyIds);
+
+    if (modErr || !models?.length) {
+      console.log(`[pokedex] No models for brand_id="${brandId}"`);
+      return null;
+    }
+
+    const matched = matchModel(model, models);
+    console.log(`[pokedex] make="${make}" model="${model}" brand_id="${brandId}" -> "${matched}"`);
+    return matched;
   } catch (e) {
     console.error('[resolvePokedexModelId]', e);
     return null;
@@ -96,16 +122,15 @@ Deno.serve(async (req: Request) => {
     }
 
     let openaiData: Record<string, unknown>;
-    try { openaiData = JSON.parse(openaiText); }
+    try   { openaiData = JSON.parse(openaiText); }
     catch { return ok({ error: 'Failed to parse OpenAI response' }); }
 
     const content = (openaiData.choices as any)?.[0]?.message?.content ?? '{"error":"empty_response"}';
 
     let parsed: Record<string, unknown>;
-    try { parsed = JSON.parse(content); }
+    try   { parsed = JSON.parse(content); }
     catch { return ok({ error: `AI returned non-JSON: ${content}` }); }
 
-    // ✅ Matching Pokédex si la voiture a été identifiée
     if (!parsed.error && parsed.make && parsed.model) {
       parsed.pokedex_model_id = await resolvePokedexModelId(
         String(parsed.make),
