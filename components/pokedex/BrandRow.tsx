@@ -5,21 +5,21 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { C } from '../../constants/colors';
-import { BrandEntry } from '../../hooks/usePokedex';
+import { PokedexBrand } from '../../hooks/usePokedex';
 
 interface Props {
-  brand:   BrandEntry;
+  brand:   PokedexBrand;
   onPress: () => void;
 }
 
 export function BrandRow({ brand, onPress }: Props) {
   const barW = useSharedValue(0);
-  barW.value = withSpring(brand.pct, { damping: 16, stiffness: 70 });
+  barW.value = withSpring(brand.progress, { damping: 16, stiffness: 70 });
   const barStyle = useAnimatedStyle(() => ({ width: `${barW.value * 100}%` as any }));
 
-  const pct      = Math.round(brand.pct * 100);
-  const initial  = brand.brand.charAt(0).toUpperCase();
-  const isMaster = pct >= 100;
+  const pct      = Math.round(brand.progress * 100);
+  const initial  = (brand.name ?? '?').charAt(0).toUpperCase();
+  const isMaster = brand.isMaster;
   const barColor = isMaster ? C.legendary : pct >= 60 ? C.cyan : C.cyanMid;
 
   return (
@@ -33,7 +33,7 @@ export function BrandRow({ brand, onPress }: Props) {
       {/* Contenu */}
       <View style={styles.content}>
         <View style={styles.topRow}>
-          <Text style={styles.brandName}>{brand.brand}</Text>
+          <Text style={styles.brandName}>{brand.name}</Text>
           <View style={styles.rightCol}>
             {isMaster && <Text style={styles.masterBadge}>{"\uD83C\uDFC6"} MASTER</Text>}
             <Text style={[styles.pctText, { color: barColor }]}>{pct}%</Text>
@@ -47,7 +47,7 @@ export function BrandRow({ brand, onPress }: Props) {
         </View>
 
         <Text style={styles.countLabel}>
-          {brand.scanned}/{brand.total} mod\u00e8le{brand.total !== 1 ? 's' : ''}
+          {brand.unlockedModels}/{brand.totalModels} mod\u00e8le{brand.totalModels !== 1 ? 's' : ''}
         </Text>
       </View>
 

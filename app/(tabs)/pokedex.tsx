@@ -4,27 +4,18 @@ import {
   FlatList,
   Image,
   Modal,
-  RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { C } from '../../constants/colors';
-import { BrandEntry, usePokedex } from '../../hooks/usePokedex';
+import { PokedexBrand, usePokedex } from '../../hooks/usePokedex';
 import { BrandRow } from '../../components/pokedex/BrandRow';
 
 export default function PokedexScreen() {
-  const { brands, isLoading, totalScanned, totalKnown, refresh } = usePokedex();
-  const [refreshing,    setRefreshing]    = useState(false);
-  const [selectedBrand, setSelectedBrand] = useState<BrandEntry | null>(null);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await refresh();
-    setRefreshing(false);
-  };
+  const { brands, loading, refreshing, onRefresh } = usePokedex();
+  const [selectedBrand, setSelectedBrand] = useState<PokedexBrand | null>(null);
 
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
@@ -46,9 +37,11 @@ export default function PokedexScreen() {
     }
   };
 
-  const globalPct = totalKnown > 0 ? Math.round((totalScanned / totalKnown) * 100) : 0;
+  const totalScanned  = brands.reduce((s, b) => s + b.unlockedModels, 0);
+  const totalKnown    = brands.reduce((s, b) => s + b.totalModels, 0);
+  const globalPct     = totalKnown > 0 ? Math.round((totalScanned / totalKnown) * 100) : 0;
 
-  if (isLoading) {
+  if (loading) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={C.cyan} />
@@ -56,82 +49,9 @@ export default function PokedexScreen() {
     );
   }
 
-  return (
-    <View style={styles.container}>
-
-      {/* Modal drill-down modèles */}
-      <Modal
-        visible={selectedBrand !== null}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setSelectedBrand(null)}
-      >
-        {selectedBrand && (
-          <View style={styles.modalContainer}>
-            <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedBrand(null)}>
-              <Text style={styles.modalCloseText}>\u2715</Text>
-            </TouchableOpacity>
-
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{selectedBrand.brand}</Text>
-              <Text style={styles.modalSubtitle}>
-                {selectedBrand.scanned}/{selectedBrand.total} mod\u00e8les\u00a0\u00b7\u00a0
-                {Math.round(selectedBrand.pct * 100)}% complet
-              </Text>
-
-              {/* Barre de progression du modal */}
-              <View style={styles.modalProgressBg}>
-                <View
-                  style={[
-                    styles.modalProgressFill,
-                    { width: `${Math.round(selectedBrand.pct * 100)}%` },
-                  ]}
-                />
-              </View>
-            </View>
-
-            <FlatList
-              data={selectedBrand.models}
-              keyExtractor={(_, i) => String(i)}
-              numColumns={2}
-              contentContainerStyle={styles.modelGrid}
-              renderItem={({ item }) => (
-                <View style={styles.modelCard}>
-                  {item.photo_url ? (
-                    <Image
-                      source={{ uri: item.photo_url }}
-                      style={styles.modelPhoto}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <View style={[styles.modelPhoto, styles.modelPhotoPlaceholder]}>
-                      <Text style={{ fontSize: 28 }}>{"\uD83D\uDE97"}</Text>
-                    </View>
-                  )}
-                  <View
-                    style={[
-                      styles.modelRarityBar,
-                      { backgroundColor: getRarityColor(item.rarity) },
-                    ]}
-                  />
-                  <View style={styles.modelInfo}>
-                    <Text style={styles.modelName} numberOfLines={1}>
-                      {item.model}
-                    </Text>
-                    <Text
-                      style={[styles.modelRarity, { color: getRarityColor(item.rarity) }]}
-                    >
-                      {getRarityLabel(item.rarity)}
-                    </Text>
-                  </View>
-                </View>
-              )}
-            />
-          </View>
-        )}
-      </Modal>
-
-      {/* Header */}
+  // Header rendu via ListHeaderComponent pour éviter FlatList dans ScrollView
+  const ListHeader = (
+    <View>
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Pok\u00e9dex {"\uD83D\uDCDA"}</Text>
@@ -146,7 +66,6 @@ export default function PokedexScreen() {
         </View>
       </View>
 
-      {/* Barre globale */}
       <View style={styles.globalBarContainer}>
         <View style={styles.globalBarBg}>
           <View style={[styles.globalBarFill, { width: `${globalPct}%` }]} />
@@ -155,25 +74,96 @@ export default function PokedexScreen() {
           {totalScanned}/{totalKnown} mod\u00e8les connus
         </Text>
       </View>
+    </View>
+  );
 
+  return (
+    <View style={styles.container}>
+
+      {/* Modal drill-down mod\u00e8les */}
+      <Modal
+        visible={selectedBrand !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setSelectedBrand(null)}
+      >
+        {selectedBrand && (
+          <View style={styles.modalContainer}>
+            <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedBrand(null)}>
+              <Text style={styles.modalCloseText}>\u2715</Text>
+            </TouchableOpacity>
+
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{selectedBrand.name}</Text>
+              <Text style={styles.modalSubtitle}>
+                {selectedBrand.unlockedModels}/{selectedBrand.totalModels} mod\u00e8les\u00a0\u00b7\u00a0
+                {Math.round(selectedBrand.progress * 100)}% complet
+              </Text>
+              <View style={styles.modalProgressBg}>
+                <View
+                  style={[
+                    styles.modalProgressFill,
+                    { width: `${Math.round(selectedBrand.progress * 100)}%` },
+                  ]}
+                />
+              </View>
+            </View>
+
+            <FlatList
+              data={selectedBrand.families.flatMap(f => f.models.map(m => ({ ...m, familyName: f.name })))}
+              keyExtractor={item => item.id}
+              numColumns={2}
+              contentContainerStyle={styles.modelGrid}
+              renderItem={({ item }) => (
+                <View style={[styles.modelCard, !item.isUnlocked && styles.modelCardLocked]}>
+                  {item.isUnlocked ? (
+                    <View style={[styles.modelPhoto, styles.modelPhotoPlaceholder]}>
+                      <Text style={{ fontSize: 28 }}>{"\uD83D\uDE97"}</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.modelPhoto, styles.modelPhotoPlaceholder]}>
+                      <Text style={{ fontSize: 28 }}>\uD83D\uDD12</Text>
+                    </View>
+                  )}
+                  <View
+                    style={[
+                      styles.modelRarityBar,
+                      { backgroundColor: item.isUnlocked ? getRarityColor(item.rarity) : C.border },
+                    ]}
+                  />
+                  <View style={styles.modelInfo}>
+                    <Text style={[styles.modelName, !item.isUnlocked && { color: C.textTertiary }]} numberOfLines={1}>
+                      {item.isUnlocked ? item.name : '???'}
+                    </Text>
+                    <Text style={[styles.modelRarity, { color: item.isUnlocked ? getRarityColor(item.rarity) : C.textTertiary }]}>
+                      {item.isUnlocked ? getRarityLabel(item.rarity) : '\u00a0'}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            />
+          </View>
+        )}
+      </Modal>
+
+      {/* FlatList principale — pas de ScrollView parent */}
       {brands.length === 0 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyIcon}>{"\uD83D\uDCDA"}</Text>
-          <Text style={styles.emptyText}>Ton Pok\u00e9dex est vide !</Text>
-          <Text style={styles.emptySubtext}>Scanne des voitures pour le remplir</Text>
+        <View style={styles.emptyWrapper}>
+          {ListHeader}
+          <View style={styles.empty}>
+            <Text style={styles.emptyIcon}>{"\uD83D\uDCDA"}</Text>
+            <Text style={styles.emptyText}>Ton Pok\u00e9dex est vide !</Text>
+            <Text style={styles.emptySubtext}>Scanne des voitures pour le remplir</Text>
+          </View>
         </View>
       ) : (
         <FlatList
           data={brands}
-          keyExtractor={item => item.brand}
+          keyExtractor={item => item.id}
           contentContainerStyle={styles.list}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={C.cyan}
-            />
-          }
+          ListHeaderComponent={ListHeader}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
           renderItem={({ item }) => (
             <BrandRow brand={item} onPress={() => setSelectedBrand(item)} />
           )}
@@ -184,8 +174,9 @@ export default function PokedexScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.bg },
-  centered:  { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' },
+  container:  { flex: 1, backgroundColor: C.bg },
+  centered:   { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' },
+  emptyWrapper: { flex: 1, backgroundColor: C.bg },
 
   header: {
     paddingTop:        60,
@@ -198,7 +189,7 @@ const styles = StyleSheet.create({
   title:      { color: C.textPrimary, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
   accentLine: { width: 36, height: 2, backgroundColor: C.cyan, marginTop: 6, marginBottom: 6, borderRadius: 1 },
   subtitle:   { color: C.textSecondary, fontSize: 13 },
-  globalStats: { alignItems: 'flex-end' },
+  globalStats:    { alignItems: 'flex-end' },
   globalPctText:  { color: C.cyan, fontSize: 30, fontWeight: '900' },
   globalPctLabel: { color: C.textTertiary, fontSize: 11, marginTop: -2 },
 
@@ -215,12 +206,11 @@ const styles = StyleSheet.create({
 
   list: { paddingHorizontal: 16, paddingBottom: 24 },
 
-  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8 },
+  empty:       { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8, paddingTop: 80 },
   emptyIcon:    { fontSize: 40 },
   emptyText:    { color: C.textPrimary,   fontSize: 20, fontWeight: 'bold' },
   emptySubtext: { color: C.textSecondary, fontSize: 14 },
 
-  // ── Modal ───────────────────────────────────
   modalContainer: { flex: 1, backgroundColor: C.bg },
   modalClose: {
     position:        'absolute',
@@ -262,7 +252,8 @@ const styles = StyleSheet.create({
     borderWidth:     1,
     borderColor:     C.border,
   },
-  modelPhoto: { width: '100%', height: 110 },
+  modelCardLocked: { opacity: 0.45 },
+  modelPhoto:      { width: '100%', height: 110 },
   modelPhotoPlaceholder: {
     backgroundColor: C.surfaceHigh,
     justifyContent:  'center',

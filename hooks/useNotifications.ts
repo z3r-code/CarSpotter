@@ -13,10 +13,8 @@ import {
 /**
  * À appeler UNE SEULE FOIS dans RootLayout.
  *
- * Notes Expo Go + SDK 54 :
- * - Les notifications locales (scheduled) fonctionnent en Expo Go iOS.
- * - Le remote push token (getExpoPushTokenAsync) nécessite un dev build.
- *   Le WARN affiché en console est normal et non bloquant.
+ * SDK 53+ : removeNotificationSubscription est supprimé.
+ * La souscription retourne un objet avec .remove().
  */
 export function useNotifications(): void {
   const responseListenerRef = useRef<Notifications.EventSubscription | null>(null);
@@ -28,8 +26,6 @@ export function useNotifications(): void {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || !mounted) return;
 
-      // ✅ Remote push token uniquement en dev build (pas en Expo Go)
-      // En Expo Go, registerForPushNotifications() retourne null via try/catch
       if (Platform.OS !== 'web') {
         const token = await registerForPushNotifications();
         if (token) {
@@ -37,12 +33,10 @@ export function useNotifications(): void {
         }
       }
 
-      // ✅ Les rappels locaux (streak + quêtes) fonctionnent en Expo Go iOS
       await scheduleStreakReminder().catch(() => {});
       await scheduleDailyQuestReminder().catch(() => {});
     })();
 
-    // Navigation au tap sur notification
     responseListenerRef.current = Notifications.addNotificationResponseReceivedListener(
       (response) => {
         const type = response.notification.request.content.data?.type as string | undefined;
@@ -59,9 +53,8 @@ export function useNotifications(): void {
 
     return () => {
       mounted = false;
-      if (responseListenerRef.current) {
-        Notifications.removeNotificationSubscription(responseListenerRef.current);
-      }
+      // SDK 53+ : utiliser .remove() au lieu de removeNotificationSubscription
+      responseListenerRef.current?.remove();
     };
   }, []);
 }
