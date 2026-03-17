@@ -1,45 +1,151 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   Modal,
+  RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { supabase } from '../../supabase';
 import { C } from '../../constants/colors';
-import { PokedexBrand, PokedexModel, usePokedex } from '../../hooks/usePokedex';
-import { BrandRow } from '../../components/pokedex/BrandRow';
+import { getXpForRarity } from '../../constants/levels';
 
-export default function PokedexScreen() {
-  const { brands, loading, refreshing, onRefresh } = usePokedex();
-  const [selectedBrand, setSelectedBrand] = useState<PokedexBrand | null>(null);
+// ─── Types ────────────────────────────────────────────────────
+type Spot = {
+  id: string;
+  make: string;
+  model: string;
+  year: number | null;
+  engine: string;
+  horsepower: number;
+  rarity: string;
+  photo_url: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  created_at: string;
+};
 
-  const getRarityColor = (rarity: string) => {
-    switch (rarity) {
-      case 'platine':    return C.platinum;
-      case 'legendaire': return C.legendary;
-      case 'epique':     return C.epic;
-      case 'rare':       return C.rare;
-      default:           return C.common;
+type SortKey = 'date_desc' | 'date_asc' | 'az' | 'za' | 'rarity' | 'hp_desc';
+
+const RARITY_ORDER: Record<string, number> = {
+  platine:    5,
+  legendaire: 4,
+  epique:     3,
+  rare:       2,
+  commun:     1,
+};
+
+const RARITY_FILTERS = [
+  { key: 'all',       label: 'Tous' },
+  { key: 'platine',   label: '💎 Platine' },
+  { key: 'legendaire',label: '🔥 Légendaire' },
+  { key: 'epique',    label: '⚡ Épique' },
+  { key: 'rare',      label: '⭐ Rare' },
+  { key: 'commun',    label: '⚪ Commun' },
+];
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'date_desc', label: 'Plus récent' },
+  { key: 'date_asc',  label: 'Plus ancien' },
+  { key: 'az',        label: 'A → Z' },
+  { key: 'za',        label: 'Z → A' },
+  { key: 'rarity',    label: 'Rareté' },
+  { key: 'hp_desc',   label: 'Puissance' },
+];
+
+// ─── Helpers ──────────────────────────────────────────────────
+function getRarityColor(rarity: string): string {
+  switch (rarity) {
+    case 'platine':    return C.platinum;
+    case 'legendaire': return C.legendary;
+    case 'epique':     return C.epic;
+    case 'rare':       return C.rare;
+    default:           return C.common;
+  }
+}
+
+function getRarityLabel(rarity: string): string {
+  switch (rarity) {
+    case 'platine':    return 'PLATINE';
+    case 'legendaire': return 'LÉGENDAIRE';
+    case 'epique':     return 'ÉPIQUE';
+    case 'rare':       return 'RARE';
+    default:           return 'COMMUN';
+  }
+}
+
+function formatDate(d: string) {
+  return new Date(d).toLocaleDateString('fr-FR', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  });
+}
+
+// ─── Main Screen ──────────────────────────────────────────────
+export default function CollectionScreen() {
+  const [spots, setSpots]         = useState<Spot[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch]       = useState('');
+  const [rarityFilter, setRarityFilter] = useState('all');
+  const [sortKey, setSortKey]     = useState<SortKey>('date_desc');
+  const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null);
+  const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set());
+
+  const fetchSpots = useCallback(async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data, error } = await supabase
+      .from('spots')
+      .select('*')
+      .eq('user_id', user.id);
+    if (error) console.log('[collection] fetch error:', error.message);
+    if (!error && data) setSpots(data);
+    setLoading(false);
+    setRefreshing(false);
+  }, []);
+
+  useEffect(() => { fetchSpots(); }, [fetchSpots]);
+  const onRefresh = () => { setRefreshing(true); fetchSpots(); };
+
+  // ─── Filter + Sort (memo) ──────────────────────────────────
+  const displayed = useMemo(() => {
+    let list = [...spots];
+
+    // Filtre rareté
+    if (rarityFilter !== 'all') {
+      list = list.filter(s => s.rarity === rarityFilter);
     }
-  };
 
-  const getRarityLabel = (rarity: string) => {
-    switch (rarity) {
-      case 'platine':    return 'PLATINE';
-      case 'legendaire': return 'LÉGENDAIRE';
-      case 'epique':     return 'ÉPIQUE';
-      case 'rare':       return 'RARE';
-      default:           return 'COMMUN';
+    // Filtre recherche
+    const q = search.toLowerCase().trim();
+    if (q) {
+      list = list.filter(s =>
+        s.make.toLowerCase().includes(q) ||
+        s.model.toLowerCase().includes(q) ||
+        `${s.make} ${s.model}`.toLowerCase().includes(q)
+      );
     }
-  };
 
-  const totalScanned = brands.reduce((s, b) => s + b.unlockedModels, 0);
-  const totalKnown   = brands.reduce((s, b) => s + b.totalModels,    0);
-  const globalPct    = totalKnown > 0 ? Math.round((totalScanned / totalKnown) * 100) : 0;
+    // Tri
+    switch (sortKey) {
+      case 'date_desc': list.sort((a, b) => b.created_at.localeCompare(a.created_at)); break;
+      case 'date_asc':  list.sort((a, b) => a.created_at.localeCompare(b.created_at)); break;
+      case 'az':        list.sort((a, b) => `${a.make}${a.model}`.localeCompare(`${b.make}${b.model}`)); break;
+      case 'za':        list.sort((a, b) => `${b.make}${b.model}`.localeCompare(`${a.make}${a.model}`)); break;
+      case 'rarity':    list.sort((a, b) => (RARITY_ORDER[b.rarity] ?? 0) - (RARITY_ORDER[a.rarity] ?? 0)); break;
+      case 'hp_desc':   list.sort((a, b) => b.horsepower - a.horsepower); break;
+    }
 
+    return list;
+  }, [spots, search, rarityFilter, sortKey]);
+
+  // ─── Loading ──────────────────────────────────────────────
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -48,105 +154,224 @@ export default function PokedexScreen() {
     );
   }
 
-  const ListHeader = (
-    <View>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Pokédex 📚</Text>
-          <View style={styles.accentLine} />
-          <Text style={styles.subtitle}>
-            {brands.length} marque{brands.length !== 1 ? 's' : ''} découvertes
-          </Text>
-        </View>
-        <View style={styles.globalStats}>
-          <Text style={styles.globalPctText}>{globalPct}%</Text>
-          <Text style={styles.globalPctLabel}>complet</Text>
-        </View>
-      </View>
-      <View style={styles.globalBarContainer}>
-        <View style={styles.globalBarBg}>
-          <View style={[styles.globalBarFill, { width: `${globalPct}%` }]} />
-        </View>
-        <Text style={styles.globalBarLabel}>
-          {totalScanned}/{totalKnown} modèles connus
-        </Text>
-      </View>
-    </View>
-  );
-
-  type FlatModel = PokedexModel & { familyName: string };
-
+  // ─── Render ───────────────────────────────────────────────
   return (
     <View style={styles.container}>
 
+      {/* ── Detail Modal ── */}
       <Modal
-        visible={selectedBrand !== null}
+        visible={selectedSpot !== null}
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => setSelectedBrand(null)}
+        onRequestClose={() => setSelectedSpot(null)}
       >
-        {selectedBrand && (
+        {selectedSpot && (
           <View style={styles.modalContainer}>
-            <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedBrand(null)}>
+            <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedSpot(null)}>
               <Text style={styles.modalCloseText}>✕</Text>
             </TouchableOpacity>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{selectedBrand.name}</Text>
-              <Text style={styles.modalSubtitle}>
-                {selectedBrand.unlockedModels}/{selectedBrand.totalModels} modèles · {Math.round(selectedBrand.progress * 100)}% complet
-              </Text>
-              <View style={styles.modalProgressBg}>
-                <View style={[styles.modalProgressFill, { width: `${Math.round(selectedBrand.progress * 100)}%` }]} />
-              </View>
-            </View>
-
-            <FlatList<FlatModel>
-              data={selectedBrand.families.flatMap(f =>
-                f.models.map(m => ({ ...m, familyName: f.name }))
-              )}
-              keyExtractor={item => item.id}
-              numColumns={2}
-              contentContainerStyle={styles.modelGrid}
-              renderItem={({ item }) => (
-                <View style={[styles.modelCard, !item.isUnlocked && styles.modelCardLocked]}>
-                  <View style={[styles.modelPhoto, styles.modelPhotoPlaceholder]}>
-                    <Text style={{ fontSize: 28 }}>{item.isUnlocked ? '🚗' : '🔒'}</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {selectedSpot.photo_url && !brokenImages.has(selectedSpot.id)
+                ? <Image
+                    source={{ uri: selectedSpot.photo_url }}
+                    style={styles.modalPhoto}
+                    resizeMode="cover"
+                    onError={() => setBrokenImages(p => new Set(p).add(selectedSpot.id))}
+                  />
+                : <View style={[styles.modalPhotoPlaceholder, { borderBottomColor: getRarityColor(selectedSpot.rarity) }]}>
+                    <Text style={{ fontSize: 48 }}>🚗</Text>
                   </View>
-                  <View style={[styles.modelRarityBar, { backgroundColor: item.isUnlocked ? getRarityColor(item.rarity) : C.border }]} />
-                  <View style={styles.modelInfo}>
-                    <Text style={[styles.modelName, !item.isUnlocked && { color: C.textTertiary }]} numberOfLines={1}>
-                      {item.isUnlocked ? item.name : '???'}
-                    </Text>
-                    <Text style={[styles.modelRarity, { color: item.isUnlocked ? getRarityColor(item.rarity) : C.textTertiary }]}>
-                      {item.isUnlocked ? getRarityLabel(item.rarity) : ' '}
-                    </Text>
-                  </View>
+              }
+              <View style={styles.modalContent}>
+                <View style={[styles.modalAccent, { backgroundColor: getRarityColor(selectedSpot.rarity) }]} />
+                <Text style={styles.modalMake}>
+                  {selectedSpot.make}{selectedSpot.year ? ` · ${selectedSpot.year}` : ''}
+                </Text>
+                <Text style={styles.modalModel}>{selectedSpot.model}</Text>
+                <View style={[styles.rarityBadge, {
+                  backgroundColor: getRarityColor(selectedSpot.rarity) + '22',
+                  borderColor: getRarityColor(selectedSpot.rarity),
+                }]}>
+                  <Text style={[styles.rarityBadgeText, { color: getRarityColor(selectedSpot.rarity) }]}>
+                    {getRarityLabel(selectedSpot.rarity)}
+                  </Text>
                 </View>
-              )}
-            />
+                <View style={styles.specCard}>
+                  {([
+                    ['Moteur',     selectedSpot.engine,                                     null],
+                    ['Puissance',  `${selectedSpot.horsepower} ch`,                         null],
+                    ['XP gagné',   `+${getXpForRarity(selectedSpot.rarity)} XP`,            getRarityColor(selectedSpot.rarity)],
+                    ['Spotté le',  formatDate(selectedSpot.created_at),                     null],
+                  ] as [string, string, string | null][]).map(([label, value, color], i, arr) => (
+                    <View key={label}>
+                      <View style={styles.specRow}>
+                        <Text style={styles.specLabel}>{label}</Text>
+                        <Text style={[styles.specValue, color ? { color } : {}]}>{value}</Text>
+                      </View>
+                      {i < arr.length - 1 && <View style={styles.specDivider} />}
+                    </View>
+                  ))}
+                  {selectedSpot.latitude != null && (
+                    <>
+                      <View style={styles.specDivider} />
+                      <View style={styles.specRow}>
+                        <Text style={styles.specLabel}>GPS</Text>
+                        <Text style={styles.specValue}>
+                          {selectedSpot.latitude.toFixed(4)}, {selectedSpot.longitude?.toFixed(4)}
+                        </Text>
+                      </View>
+                    </>
+                  )}
+                </View>
+              </View>
+            </ScrollView>
           </View>
         )}
       </Modal>
 
-      {brands.length === 0 ? (
-        <View style={styles.emptyWrapper}>
-          {ListHeader}
-          <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>📚</Text>
-            <Text style={styles.emptyText}>Ton Pokédex est vide !</Text>
-            <Text style={styles.emptySubtext}>Scanne des voitures pour le remplir</Text>
-          </View>
+      {/* ── Header ── */}
+      <View style={styles.header}>
+        <Text style={styles.title}>Collection</Text>
+        <View style={styles.accentLine} />
+        <Text style={styles.subtitle}>
+          {displayed.length}{rarityFilter !== 'all' || search ? ` / ${spots.length}` : ''} voiture{spots.length !== 1 ? 's' : ''}
+        </Text>
+      </View>
+
+      {/* ── Search bar ── */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchBox}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Rechercher une voiture..."
+            placeholderTextColor={C.textTertiary}
+            value={search}
+            onChangeText={setSearch}
+            autoCorrect={false}
+            autoCapitalize="none"
+            clearButtonMode="while-editing"
+          />
+        </View>
+      </View>
+
+      {/* ── Rarity filter chips ── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipsRow}
+        contentContainerStyle={styles.chipsContent}
+      >
+        {RARITY_FILTERS.map(f => (
+          <TouchableOpacity
+            key={f.key}
+            style={[
+              styles.chip,
+              rarityFilter === f.key && styles.chipActive,
+            ]}
+            onPress={() => setRarityFilter(f.key)}
+            activeOpacity={0.75}
+          >
+            <Text style={[
+              styles.chipText,
+              rarityFilter === f.key && styles.chipTextActive,
+            ]}>{f.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* ── Sort options ── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.sortRow}
+        contentContainerStyle={styles.chipsContent}
+      >
+        {SORT_OPTIONS.map(s => (
+          <TouchableOpacity
+            key={s.key}
+            style={[
+              styles.sortChip,
+              sortKey === s.key && styles.sortChipActive,
+            ]}
+            onPress={() => setSortKey(s.key)}
+            activeOpacity={0.75}
+          >
+            <Text style={[
+              styles.sortChipText,
+              sortKey === s.key && styles.sortChipTextActive,
+            ]}>{s.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* ── List ── */}
+      {displayed.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyIcon}>{search || rarityFilter !== 'all' ? '🔍' : '🚗'}</Text>
+          <Text style={styles.emptyText}>
+            {search || rarityFilter !== 'all' ? 'Aucun résultat' : 'Ta collection est vide'}
+          </Text>
+          <Text style={styles.emptySubtext}>
+            {search || rarityFilter !== 'all' ? 'Essaie un autre filtre' : 'Va scanner ta première voiture !'}
+          </Text>
         </View>
       ) : (
-        <FlatList<PokedexBrand>
-          data={brands}
+        <FlatList
+          data={displayed}
           keyExtractor={item => item.id}
-          contentContainerStyle={styles.list}
-          ListHeaderComponent={ListHeader}
-          refreshing={refreshing}
-          onRefresh={onRefresh}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.cyan} />
+          }
           renderItem={({ item }) => (
-            <BrandRow brand={item} onPress={() => setSelectedBrand(item)} />
+            <TouchableOpacity
+              style={styles.card}
+              activeOpacity={0.75}
+              onPress={() => setSelectedSpot(item)}
+            >
+              <View style={[styles.rarityBar, { backgroundColor: getRarityColor(item.rarity) }]} />
+
+              {item.photo_url && !brokenImages.has(item.id)
+                ? <Image
+                    source={{ uri: item.photo_url }}
+                    style={styles.thumbnail}
+                    resizeMode="cover"
+                    onError={() => setBrokenImages(p => new Set(p).add(item.id))}
+                  />
+                : <View style={[styles.thumbnail, styles.thumbnailEmpty, { borderColor: getRarityColor(item.rarity) + '44' }]}>
+                    <Text style={{ fontSize: 22 }}>🚗</Text>
+                  </View>
+              }
+
+              <View style={styles.cardContent}>
+                <View style={styles.cardTop}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardMake}>{item.make}</Text>
+                    <Text style={styles.cardModel} numberOfLines={1}>{item.model}</Text>
+                  </View>
+                  <View style={styles.cardRight}>
+                    <Text style={[styles.cardXP, { color: getRarityColor(item.rarity) }]}>
+                      +{getXpForRarity(item.rarity)} XP
+                    </Text>
+                    <View style={[styles.rarityPill, {
+                      backgroundColor: getRarityColor(item.rarity) + '22',
+                      borderColor: getRarityColor(item.rarity) + '66',
+                    }]}>
+                      <Text style={[styles.rarityPillText, { color: getRarityColor(item.rarity) }]}>
+                        {getRarityLabel(item.rarity)}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+                <View style={styles.cardFooter}>
+                  <Text style={styles.cardSpec}>{item.horsepower} ch</Text>
+                  <Text style={styles.cardDot}>·</Text>
+                  <Text style={styles.cardSpec}>{item.engine}</Text>
+                  <Text style={styles.cardDate}>{formatDate(item.created_at)}</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
           )}
         />
       )}
@@ -154,32 +379,82 @@ export default function PokedexScreen() {
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container:    { flex: 1, backgroundColor: C.bg },
-  centered:     { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' },
-  emptyWrapper: { flex: 1, backgroundColor: C.bg },
-  header: {
-    paddingTop: 60, paddingHorizontal: 20, paddingBottom: 10,
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
-  },
+  container:  { flex: 1, backgroundColor: C.bg },
+  centered:   { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' },
+
+  header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 8 },
   title:      { color: C.textPrimary, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
   accentLine: { width: 36, height: 2, backgroundColor: C.cyan, marginTop: 6, marginBottom: 6, borderRadius: 1 },
   subtitle:   { color: C.textSecondary, fontSize: 13 },
-  globalStats:    { alignItems: 'flex-end' },
-  globalPctText:  { color: C.cyan, fontSize: 30, fontWeight: '900' },
-  globalPctLabel: { color: C.textTertiary, fontSize: 11, marginTop: -2 },
-  globalBarContainer: { paddingHorizontal: 20, marginBottom: 16 },
-  globalBarBg: {
-    height: 6, backgroundColor: C.surfaceHigh,
-    borderRadius: 3, overflow: 'hidden', marginBottom: 4,
+
+  searchRow:   { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
+  searchBox: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: C.surface, borderRadius: 12,
+    borderWidth: 1, borderColor: C.border,
+    paddingHorizontal: 12, height: 44,
   },
-  globalBarFill:  { height: '100%', backgroundColor: C.cyan, borderRadius: 3 },
-  globalBarLabel: { color: C.textTertiary, fontSize: 11, textAlign: 'right' },
-  list: { paddingHorizontal: 16, paddingBottom: 24 },
-  empty:        { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8, paddingTop: 80 },
+  searchIcon:  { fontSize: 15, marginRight: 8 },
+  searchInput: { flex: 1, color: C.textPrimary, fontSize: 15 },
+
+  chipsRow:    { maxHeight: 44, marginTop: 8 },
+  sortRow:     { maxHeight: 40, marginTop: 4, marginBottom: 6 },
+  chipsContent: { paddingHorizontal: 16, gap: 8, flexDirection: 'row', alignItems: 'center' },
+
+  chip: {
+    paddingHorizontal: 14, paddingVertical: 7,
+    borderRadius: 20, borderWidth: 1,
+    borderColor: C.border, backgroundColor: C.surface,
+  },
+  chipActive:     { backgroundColor: C.cyan + '22', borderColor: C.cyan },
+  chipText:       { color: C.textSecondary, fontSize: 13, fontWeight: '500' },
+  chipTextActive: { color: C.cyan, fontWeight: '700' },
+
+  sortChip: {
+    paddingHorizontal: 12, paddingVertical: 5,
+    borderRadius: 16, borderWidth: 1,
+    borderColor: 'transparent', backgroundColor: 'transparent',
+  },
+  sortChipActive:     { borderColor: C.border, backgroundColor: C.surfaceHigh },
+  sortChipText:       { color: C.textTertiary, fontSize: 12 },
+  sortChipTextActive: { color: C.textPrimary, fontWeight: '700' },
+
+  listContent: { padding: 16, paddingTop: 8, paddingBottom: 32 },
+
+  card: {
+    flexDirection: 'row', backgroundColor: C.surface,
+    borderRadius: 10, marginBottom: 10,
+    overflow: 'hidden', borderWidth: 1, borderColor: C.border,
+  },
+  rarityBar:  { width: 3 },
+  thumbnail:  { width: 72, height: 72, margin: 10, borderRadius: 8 },
+  thumbnailEmpty: {
+    backgroundColor: C.surfaceHigh, justifyContent: 'center',
+    alignItems: 'center', borderWidth: 1,
+  },
+  cardContent: { flex: 1, paddingVertical: 10, paddingRight: 12 },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
+  cardMake:  { color: C.textSecondary, fontSize: 11, fontWeight: '500' },
+  cardModel: { color: C.textPrimary, fontSize: 16, fontWeight: '800' },
+  cardRight: { alignItems: 'flex-end', gap: 4 },
+  cardXP:    { fontSize: 12, fontWeight: '700' },
+  rarityPill: {
+    paddingHorizontal: 7, paddingVertical: 3,
+    borderRadius: 6, borderWidth: 1,
+  },
+  rarityPillText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
+  cardFooter: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardSpec:   { color: C.textSecondary, fontSize: 12 },
+  cardDot:    { color: C.textTertiary, fontSize: 10 },
+  cardDate:   { color: C.textTertiary, fontSize: 12, marginLeft: 'auto' },
+
+  empty:        { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8, paddingBottom: 80 },
   emptyIcon:    { fontSize: 40 },
   emptyText:    { color: C.textPrimary, fontSize: 20, fontWeight: 'bold' },
   emptySubtext: { color: C.textSecondary, fontSize: 14 },
+
   modalContainer: { flex: 1, backgroundColor: C.bg },
   modalClose: {
     position: 'absolute', top: 16, right: 16, zIndex: 10,
@@ -188,25 +463,23 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: C.border,
   },
   modalCloseText: { color: C.textPrimary, fontSize: 14, fontWeight: 'bold' },
-  modalHeader: { paddingTop: 60, paddingHorizontal: 24, paddingBottom: 16 },
-  modalTitle:    { color: C.textPrimary, fontSize: 28, fontWeight: '900', marginBottom: 4 },
-  modalSubtitle: { color: C.textSecondary, fontSize: 13, marginBottom: 12 },
-  modalProgressBg: {
-    height: 6, backgroundColor: C.surfaceHigh,
-    borderRadius: 3, overflow: 'hidden',
+  modalPhoto: { width: '100%', height: 280 },
+  modalPhotoPlaceholder: {
+    width: '100%', height: 220, backgroundColor: C.surface,
+    justifyContent: 'center', alignItems: 'center', borderBottomWidth: 2,
   },
-  modalProgressFill: { height: '100%', backgroundColor: C.cyan, borderRadius: 3 },
-  modelGrid:  { padding: 16, gap: 10 },
-  modelCard: {
-    flex: 1, margin: 5, backgroundColor: C.surface,
-    borderRadius: 10, overflow: 'hidden',
-    borderWidth: 1, borderColor: C.border,
+  modalContent:  { padding: 24 },
+  modalAccent:   { height: 2, width: 48, borderRadius: 1, marginBottom: 16 },
+  modalMake:     { color: C.textSecondary, fontSize: 15, marginBottom: 4 },
+  modalModel:    { color: C.textPrimary, fontSize: 34, fontWeight: 'bold', marginBottom: 16 },
+  rarityBadge: {
+    alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 6,
+    borderRadius: 8, marginBottom: 24, borderWidth: 1,
   },
-  modelCardLocked:       { opacity: 0.45 },
-  modelPhoto:            { width: '100%', height: 110 },
-  modelPhotoPlaceholder: { backgroundColor: C.surfaceHigh, justifyContent: 'center', alignItems: 'center' },
-  modelRarityBar: { height: 2 },
-  modelInfo:      { padding: 8 },
-  modelName:      { color: C.textPrimary, fontSize: 12, fontWeight: '700', marginBottom: 2 },
-  modelRarity:    { fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
+  rarityBadgeText: { fontWeight: 'bold', fontSize: 12, letterSpacing: 1.5 },
+  specCard:    { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border },
+  specRow:     { flexDirection: 'row', justifyContent: 'space-between', padding: 16 },
+  specLabel:   { color: C.textSecondary, fontSize: 14 },
+  specValue:   { color: C.textPrimary, fontSize: 14, fontWeight: '600' },
+  specDivider: { height: 1, backgroundColor: C.border },
 });
