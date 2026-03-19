@@ -16,7 +16,6 @@ import { supabase } from '../../supabase';
 import { C } from '../../constants/colors';
 import { getXpForRarity } from '../../constants/levels';
 
-// ─── Types ────────────────────────────────────────────────────
 type Spot = {
   id: string;
   make: string;
@@ -28,7 +27,7 @@ type Spot = {
   photo_url: string | null;
   latitude: number | null;
   longitude: number | null;
-  spotted_at: string;  // ✅ vraie colonne
+  spotted_at: string;
 };
 
 type SortKey = 'date_desc' | 'date_asc' | 'az' | 'za' | 'rarity' | 'hp_desc';
@@ -55,7 +54,6 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'hp_desc',   label: 'Puissance' },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────
 function getRarityColor(rarity: string): string {
   switch (rarity) {
     case 'platine':    return C.platinum;
@@ -82,7 +80,6 @@ function formatDate(d: string) {
   });
 }
 
-// ─── Main Screen ──────────────────────────────────────────────
 export default function CollectionScreen() {
   const [spots, setSpots]           = useState<Spot[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -107,14 +104,9 @@ export default function CollectionScreen() {
   useEffect(() => { fetchSpots(); }, [fetchSpots]);
   const onRefresh = () => { setRefreshing(true); fetchSpots(); };
 
-  // ─── Filter + Sort (memo) ──────────────────────────────────
   const displayed = useMemo(() => {
     let list = [...spots];
-
-    if (rarityFilter !== 'all') {
-      list = list.filter(s => s.rarity === rarityFilter);
-    }
-
+    if (rarityFilter !== 'all') list = list.filter(s => s.rarity === rarityFilter);
     const q = search.toLowerCase().trim();
     if (q) {
       list = list.filter(s =>
@@ -123,50 +115,27 @@ export default function CollectionScreen() {
         `${s.make} ${s.model}`.toLowerCase().includes(q)
       );
     }
-
-    // ✅ null-safe : fallback '' si spotted_at est null (ne devrait pas arriver)
     switch (sortKey) {
-      case 'date_desc':
-        list.sort((a, b) => (b.spotted_at ?? '').localeCompare(a.spotted_at ?? ''));
-        break;
-      case 'date_asc':
-        list.sort((a, b) => (a.spotted_at ?? '').localeCompare(b.spotted_at ?? ''));
-        break;
-      case 'az':
-        list.sort((a, b) => `${a.make}${a.model}`.localeCompare(`${b.make}${b.model}`));
-        break;
-      case 'za':
-        list.sort((a, b) => `${b.make}${b.model}`.localeCompare(`${a.make}${a.model}`));
-        break;
-      case 'rarity':
-        list.sort((a, b) => (RARITY_ORDER[b.rarity] ?? 0) - (RARITY_ORDER[a.rarity] ?? 0));
-        break;
-      case 'hp_desc':
-        list.sort((a, b) => (b.horsepower ?? 0) - (a.horsepower ?? 0));
-        break;
+      case 'date_desc': list.sort((a, b) => (b.spotted_at ?? '').localeCompare(a.spotted_at ?? '')); break;
+      case 'date_asc':  list.sort((a, b) => (a.spotted_at ?? '').localeCompare(b.spotted_at ?? '')); break;
+      case 'az':        list.sort((a, b) => `${a.make}${a.model}`.localeCompare(`${b.make}${b.model}`)); break;
+      case 'za':        list.sort((a, b) => `${b.make}${b.model}`.localeCompare(`${a.make}${a.model}`)); break;
+      case 'rarity':    list.sort((a, b) => (RARITY_ORDER[b.rarity] ?? 0) - (RARITY_ORDER[a.rarity] ?? 0)); break;
+      case 'hp_desc':   list.sort((a, b) => (b.horsepower ?? 0) - (a.horsepower ?? 0)); break;
     }
-
     return list;
   }, [spots, search, rarityFilter, sortKey]);
 
   if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={C.cyan} />
-      </View>
-    );
+    return <View style={styles.centered}><ActivityIndicator size="large" color={C.cyan} /></View>;
   }
 
   return (
     <View style={styles.container}>
 
       {/* Detail Modal */}
-      <Modal
-        visible={selectedSpot !== null}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setSelectedSpot(null)}
-      >
+      <Modal visible={selectedSpot !== null} animationType="slide"
+        presentationStyle="pageSheet" onRequestClose={() => setSelectedSpot(null)}>
         {selectedSpot && (
           <View style={styles.modalContainer}>
             <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedSpot(null)}>
@@ -174,21 +143,16 @@ export default function CollectionScreen() {
             </TouchableOpacity>
             <ScrollView showsVerticalScrollIndicator={false}>
               {selectedSpot.photo_url && !brokenImages.has(selectedSpot.id)
-                ? <Image
-                    source={{ uri: selectedSpot.photo_url }}
-                    style={styles.modalPhoto}
+                ? <Image source={{ uri: selectedSpot.photo_url }} style={styles.modalPhoto}
                     resizeMode="cover"
-                    onError={() => setBrokenImages(p => new Set(p).add(selectedSpot.id))}
-                  />
+                    onError={() => setBrokenImages(p => new Set(p).add(selectedSpot.id))} />
                 : <View style={[styles.modalPhotoPlaceholder, { borderBottomColor: getRarityColor(selectedSpot.rarity) }]}>
                     <Text style={{ fontSize: 48 }}>🚗</Text>
                   </View>
               }
               <View style={styles.modalContent}>
                 <View style={[styles.modalAccent, { backgroundColor: getRarityColor(selectedSpot.rarity) }]} />
-                <Text style={styles.modalMake}>
-                  {selectedSpot.make}{selectedSpot.year ? ` · ${selectedSpot.year}` : ''}
-                </Text>
+                <Text style={styles.modalMake}>{selectedSpot.make}{selectedSpot.year ? ` · ${selectedSpot.year}` : ''}</Text>
                 <Text style={styles.modalModel}>{selectedSpot.model}</Text>
                 <View style={[styles.rarityBadge, {
                   backgroundColor: getRarityColor(selectedSpot.rarity) + '22',
@@ -257,9 +221,13 @@ export default function CollectionScreen() {
         </View>
       </View>
 
-      {/* Rarity chips */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}
-        style={styles.chipsRow} contentContainerStyle={styles.chipsContent}>
+      {/* ✅ Rarity chips — ScrollView sans maxHeight, padding vertical fixé */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipsScroll}
+        contentContainerStyle={styles.chipsContent}
+      >
         {RARITY_FILTERS.map(f => (
           <TouchableOpacity
             key={f.key}
@@ -274,9 +242,13 @@ export default function CollectionScreen() {
         ))}
       </ScrollView>
 
-      {/* Sort chips */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}
-        style={styles.sortRow} contentContainerStyle={styles.chipsContent}>
+      {/* ✅ Sort chips — même fix */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.sortScroll}
+        contentContainerStyle={styles.sortContent}
+      >
         {SORT_OPTIONS.map(s => (
           <TouchableOpacity
             key={s.key}
@@ -315,12 +287,9 @@ export default function CollectionScreen() {
               onPress={() => setSelectedSpot(item)}>
               <View style={[styles.rarityBar, { backgroundColor: getRarityColor(item.rarity) }]} />
               {item.photo_url && !brokenImages.has(item.id)
-                ? <Image
-                    source={{ uri: item.photo_url }}
-                    style={styles.thumbnail}
+                ? <Image source={{ uri: item.photo_url }} style={styles.thumbnail}
                     resizeMode="cover"
-                    onError={() => setBrokenImages(p => new Set(p).add(item.id))}
-                  />
+                    onError={() => setBrokenImages(p => new Set(p).add(item.id))} />
                 : <View style={[styles.thumbnail, styles.thumbnailEmpty,
                     { borderColor: getRarityColor(item.rarity) + '44' }]}>
                     <Text style={{ fontSize: 22 }}>🚗</Text>
@@ -349,7 +318,7 @@ export default function CollectionScreen() {
                 <View style={styles.cardFooter}>
                   <Text style={styles.cardSpec}>{item.horsepower} ch</Text>
                   <Text style={styles.cardDot}>·</Text>
-                  <Text style={styles.cardSpec}>{item.engine}</Text>
+                  <Text style={styles.cardSpec} numberOfLines={1} style={[styles.cardSpec, { flex: 1 }]}>{item.engine}</Text>
                   <Text style={styles.cardDate}>
                     {item.spotted_at ? formatDate(item.spotted_at) : '-'}
                   </Text>
@@ -366,11 +335,12 @@ export default function CollectionScreen() {
 const styles = StyleSheet.create({
   container:  { flex: 1, backgroundColor: C.bg },
   centered:   { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' },
-  header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 8 },
+  header:     { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 8 },
   title:      { color: C.textPrimary, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
   accentLine: { width: 36, height: 2, backgroundColor: C.cyan, marginTop: 6, marginBottom: 6, borderRadius: 1 },
   subtitle:   { color: C.textSecondary, fontSize: 13 },
-  searchRow:   { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
+
+  searchRow: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
   searchBox: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: C.surface, borderRadius: 12,
@@ -379,56 +349,60 @@ const styles = StyleSheet.create({
   },
   searchIcon:  { fontSize: 15, marginRight: 8 },
   searchInput: { flex: 1, color: C.textPrimary, fontSize: 15 },
-  chipsRow:     { maxHeight: 44, marginTop: 8 },
-  sortRow:      { maxHeight: 40, marginTop: 4, marginBottom: 6 },
-  chipsContent: { paddingHorizontal: 16, gap: 8, flexDirection: 'row', alignItems: 'center' },
+
+  // ✅ Plus de maxHeight qui coupe les chips
+  chipsScroll:   { marginTop: 10, marginBottom: 2 },
+  chipsContent:  { paddingHorizontal: 16, paddingVertical: 4, gap: 8, flexDirection: 'row', alignItems: 'center' },
   chip: {
-    paddingHorizontal: 14, paddingVertical: 7,
+    paddingHorizontal: 14, paddingVertical: 8,
     borderRadius: 20, borderWidth: 1,
     borderColor: C.border, backgroundColor: C.surface,
   },
   chipActive:     { backgroundColor: C.cyan + '22', borderColor: C.cyan },
   chipText:       { color: C.textSecondary, fontSize: 13, fontWeight: '500' },
   chipTextActive: { color: C.cyan, fontWeight: '700' },
+
+  sortScroll:  { marginBottom: 8 },
+  sortContent: { paddingHorizontal: 16, paddingVertical: 4, gap: 6, flexDirection: 'row', alignItems: 'center' },
   sortChip: {
-    paddingHorizontal: 12, paddingVertical: 5,
+    paddingHorizontal: 12, paddingVertical: 6,
     borderRadius: 16, borderWidth: 1,
     borderColor: 'transparent', backgroundColor: 'transparent',
   },
   sortChipActive:     { borderColor: C.border, backgroundColor: C.surfaceHigh },
   sortChipText:       { color: C.textTertiary, fontSize: 12 },
   sortChipTextActive: { color: C.textPrimary, fontWeight: '700' },
-  listContent:  { padding: 16, paddingTop: 8, paddingBottom: 32 },
+
+  listContent: { padding: 16, paddingTop: 4, paddingBottom: 32 },
   card: {
     flexDirection: 'row', backgroundColor: C.surface,
     borderRadius: 10, marginBottom: 10,
     overflow: 'hidden', borderWidth: 1, borderColor: C.border,
   },
-  rarityBar:  { width: 3 },
-  thumbnail:  { width: 72, height: 72, margin: 10, borderRadius: 8 },
+  rarityBar:      { width: 3 },
+  thumbnail:      { width: 72, height: 72, margin: 10, borderRadius: 8 },
   thumbnailEmpty: {
     backgroundColor: C.surfaceHigh, justifyContent: 'center',
     alignItems: 'center', borderWidth: 1,
   },
-  cardContent:  { flex: 1, paddingVertical: 10, paddingRight: 12 },
-  cardTop:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
-  cardMake:     { color: C.textSecondary, fontSize: 11, fontWeight: '500' },
-  cardModel:    { color: C.textPrimary, fontSize: 16, fontWeight: '800' },
-  cardRight:    { alignItems: 'flex-end', gap: 4 },
-  cardXP:       { fontSize: 12, fontWeight: '700' },
-  rarityPill: {
-    paddingHorizontal: 7, paddingVertical: 3,
-    borderRadius: 6, borderWidth: 1,
-  },
+  cardContent: { flex: 1, paddingVertical: 10, paddingRight: 12 },
+  cardTop:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
+  cardMake:    { color: C.textSecondary, fontSize: 11, fontWeight: '500' },
+  cardModel:   { color: C.textPrimary, fontSize: 16, fontWeight: '800' },
+  cardRight:   { alignItems: 'flex-end', gap: 4 },
+  cardXP:      { fontSize: 12, fontWeight: '700' },
+  rarityPill:  { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
   rarityPillText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
-  cardFooter:   { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cardSpec:     { color: C.textSecondary, fontSize: 12 },
-  cardDot:      { color: C.textTertiary, fontSize: 10 },
-  cardDate:     { color: C.textTertiary, fontSize: 12, marginLeft: 'auto' },
+  cardFooter:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardSpec:    { color: C.textSecondary, fontSize: 12 },
+  cardDot:     { color: C.textTertiary, fontSize: 10 },
+  cardDate:    { color: C.textTertiary, fontSize: 12 },
+
   empty:        { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8, paddingBottom: 80 },
   emptyIcon:    { fontSize: 40 },
   emptyText:    { color: C.textPrimary, fontSize: 20, fontWeight: 'bold' },
   emptySubtext: { color: C.textSecondary, fontSize: 14 },
+
   modalContainer: { flex: 1, backgroundColor: C.bg },
   modalClose: {
     position: 'absolute', top: 16, right: 16, zIndex: 10,
@@ -442,11 +416,11 @@ const styles = StyleSheet.create({
     width: '100%', height: 220, backgroundColor: C.surface,
     justifyContent: 'center', alignItems: 'center', borderBottomWidth: 2,
   },
-  modalContent:  { padding: 24 },
-  modalAccent:   { height: 2, width: 48, borderRadius: 1, marginBottom: 16 },
-  modalMake:     { color: C.textSecondary, fontSize: 15, marginBottom: 4 },
-  modalModel:    { color: C.textPrimary, fontSize: 34, fontWeight: 'bold', marginBottom: 16 },
-  rarityBadge: {
+  modalContent: { padding: 24 },
+  modalAccent:  { height: 2, width: 48, borderRadius: 1, marginBottom: 16 },
+  modalMake:    { color: C.textSecondary, fontSize: 15, marginBottom: 4 },
+  modalModel:   { color: C.textPrimary, fontSize: 34, fontWeight: 'bold', marginBottom: 16 },
+  rarityBadge:  {
     alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 6,
     borderRadius: 8, marginBottom: 24, borderWidth: 1,
   },
