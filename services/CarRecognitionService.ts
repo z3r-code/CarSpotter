@@ -19,15 +19,15 @@ export async function checkScanQuota(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // ✅ La colonne s'appelle created_at dans spots, pas spotted_at
+  // ✅ spotted_at est la vraie colonne date de la table spots
   const { count, error } = await supabase
     .from('spots')
     .select('*', { count: 'exact', head: true })
     .eq('user_id', userId)
-    .gte('created_at', today.toISOString());
+    .gte('spotted_at', today.toISOString());
 
   if (error) {
-    console.warn('checkScanQuota error (fail-open):', error.message || error.code);
+    console.warn('checkScanQuota error:', error.message ?? error.code);
     return { canScan: true, scansToday: 0 };
   }
 
@@ -56,8 +56,8 @@ export async function recognizeCar(
     throw new Error(`Edge Function: ${errorMsg}`);
   }
 
-  if (!data)        throw new Error('Edge Function returned null data');
-  if (data.error)   throw new Error(data.error);
+  if (!data)       throw new Error('Edge Function returned null data');
+  if (data.error)  throw new Error(data.error);
 
   const rarity = getRarityFromCar(data.make ?? '', data.horsepower ?? 0);
 
@@ -69,7 +69,6 @@ export async function recognizeCar(
     horsepower:       data.horsepower  ?? 0,
     rarity,
     confidence:       data.confidence  ?? 70,
-    // ✅ On retourne explicitement pokedex_model_id depuis la réponse de l'Edge Function
     pokedex_model_id: data.pokedex_model_id ?? null,
   };
 }
