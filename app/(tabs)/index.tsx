@@ -4,7 +4,6 @@ import {
   Alert,
   Animated,
   Easing,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,9 +11,9 @@ import {
   View,
   Image,
 } from 'react-native';
-import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
-import * as ImageManipulator from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system';
 import { supabase } from '../../supabase';
 import { recognizeCar, checkScanQuota, MAX_FREE_SCANS_PER_DAY } from '../../services/CarRecognitionService';
 import { getXpForRarity } from '../../constants/levels';
@@ -39,7 +38,6 @@ export default function ScannerScreen() {
   const resultAnim   = useRef(new Animated.Value(0)).current;
   const pulseAnim    = useRef(new Animated.Value(1)).current;
 
-  // Scan line loop
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
@@ -51,21 +49,18 @@ export default function ScannerScreen() {
     return () => loop.stop();
   }, []);
 
-  // Pulse bouton
   useEffect(() => {
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.03, duration: 900,  useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1,    duration: 900,  useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1.03, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1,    duration: 900, useNativeDriver: true }),
       ])
     );
     pulse.start();
     return () => pulse.stop();
   }, []);
 
-  useEffect(() => {
-    loadQuota();
-  }, []);
+  useEffect(() => { loadQuota(); }, []);
 
   const loadQuota = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -92,23 +87,23 @@ export default function ScannerScreen() {
     setSaved(false);
 
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+      // quality: 0.5 compresse nativement — pas besoin d'expo-image-manipulator
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.5,
+        base64: true,
+        exif: false,
+      });
       if (!photo?.uri) throw new Error('Aucune photo prise');
+      if (!photo.base64) throw new Error('Base64 non disponible');
 
       setPhotoUri(photo.uri);
 
-      const compressed = await ImageManipulator.manipulateAsync(
-        photo.uri,
-        [{ resize: { width: 1024 } }],
-        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-      );
-
-      const car = await recognizeCar(compressed.base64!);
+      const car = await recognizeCar(photo.base64);
       setResult(car);
 
       Animated.spring(resultAnim, { toValue: 1, friction: 7, tension: 50, useNativeDriver: true }).start();
     } catch (err: any) {
-      Alert.alert('Erreur', err.message ?? 'Impossible d\'identifier la voiture');
+      Alert.alert('Erreur', err.message ?? "Impossible d'identifier la voiture");
     } finally {
       setScanning(false);
     }
@@ -124,15 +119,24 @@ export default function ScannerScreen() {
 
       let photoUrl: string | null = null;
       if (photoUri) {
-        const filename  = `${user.id}/${Date.now()}.jpg`;
-        const response  = await fetch(photoUri);
-        const blob      = await response.blob();
-        const arrayBuf  = await blob.arrayBuffer();
-        const { error: uploadError } = await supabase.storage
-          .from('spot-photos').upload(filename, arrayBuf, { contentType: 'image/jpeg', upsert: false });
-        if (!uploadError) {
-          const { data: urlData } = supabase.storage.from('spot-photos').getPublicUrl(filename);
-          photoUrl = urlData.publicUrl;
+        const filename = `${user.id}/${Date.now()}.jpg`;
+        const fileInfo = await FileSystem.getInfoAsync(photoUri);
+        if (fileInfo.exists) {
+          const base64 = await FileSystem.readAsStringAsync(photoUri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          const byteCharacters = atob(base64);
+          const byteArray = new Uint8Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteArray[i] = byteCharacters.charCodeAt(i);
+          }
+          const { error: uploadError } = await supabase.storage
+            .from('spot-photos')
+            .upload(filename, byteArray, { contentType: 'image/jpeg', upsert: false });
+          if (!uploadError) {
+            const { data: urlData } = supabase.storage.from('spot-photos').getPublicUrl(filename);
+            photoUrl = urlData.publicUrl;
+          }
         }
       }
 
@@ -220,7 +224,6 @@ export default function ScannerScreen() {
           styles.resultWrapper,
           { opacity: resultAnim, transform: [{ scale: resultAnim.interpolate({ inputRange: [0,1], outputRange: [0.95,1] }) }] },
         ]}>
-
           <Text style={styles.resultTitle}>SPOT RÉUSSI !</Text>
 
           <View style={[styles.photoFrame, { borderColor: rarityColor }]}>
@@ -244,9 +247,9 @@ export default function ScannerScreen() {
             <View style={styles.carSpecsDivider} />
             <View style={styles.carSpecs}>
               {[
-                ['Moteur',      result.engine],
-                ['Puissance',   `${result.horsepower} ch`],
-                ['Confiance IA',`${result.confidence}%`],
+                ['Moteur',       result.engine],
+                ['Puissance',    `${result.horsepower} ch`],
+                ['Confiance IA', `${result.confidence}%`],
               ].map(([label, value]) => (
                 <View key={label} style={styles.specRow}>
                   <Text style={styles.specLabel}>{label}</Text>
@@ -286,7 +289,6 @@ export default function ScannerScreen() {
           }}>
             <Text style={styles.newScanText}>Nouveau scan</Text>
           </TouchableOpacity>
-
         </Animated.View>
       </ScrollView>
     );
@@ -298,27 +300,25 @@ export default function ScannerScreen() {
     <View style={styles.container}>
       <CameraView ref={cameraRef} style={styles.camera} facing="back">
 
-        {/* Quota */}
         <View style={styles.quotaBar}>
           <Text style={styles.quotaText}>
-            {remaining > 0 ? `${remaining} scan${remaining > 1 ? 's' : ''} restant${remaining > 1 ? 's' : ''}` : 'Quota atteint pour aujourd\'hui'}
+            {remaining > 0
+              ? `${remaining} scan${remaining > 1 ? 's' : ''} restant${remaining > 1 ? 's' : ''}`
+              : "Quota atteint pour aujourd'hui"}
           </Text>
         </View>
 
-        {/* Cadre cyan (plus rouge) */}
         <View style={styles.frameContainer}>
           <View style={styles.frame}>
             <View style={[styles.corner, styles.cornerTL, { borderColor: C.cyan }]} />
             <View style={[styles.corner, styles.cornerTR, { borderColor: C.cyan }]} />
             <View style={[styles.corner, styles.cornerBL, { borderColor: C.cyan }]} />
             <View style={[styles.corner, styles.cornerBR, { borderColor: C.cyan }]} />
-            {/* Ligne de scan animée */}
             <Animated.View style={[styles.scanLine, { transform: [{ translateY: scanLineY }], backgroundColor: C.cyan }]} />
           </View>
           <Text style={styles.frameHint}>Centre la voiture dans le cadre</Text>
         </View>
 
-        {/* Bouton Scanner */}
         <View style={styles.bottomBar}>
           <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
             <TouchableOpacity
@@ -341,144 +341,77 @@ export default function ScannerScreen() {
 }
 
 const styles = StyleSheet.create({
-  container:  { flex: 1, backgroundColor: '#000' },
-  camera:     { flex: 1 },
+  container: { flex: 1, backgroundColor: '#000' },
+  camera:    { flex: 1 },
 
-  quotaBar:  {
-    position:        'absolute', top: 60, left: 0, right: 0,
-    alignItems:      'center',
-  },
+  quotaBar:  { position: 'absolute', top: 60, left: 0, right: 0, alignItems: 'center' },
   quotaText: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '500' },
 
   frameContainer: {
-    position:       'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    justifyContent: 'center',  alignItems: 'center',
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    justifyContent: 'center', alignItems: 'center',
   },
-  frame: {
-    width: 280, height: 280,
-    position:  'relative',
-    alignItems: 'center',
-  },
-  corner: {
-    position:    'absolute',
-    width:       28, height: 28,
-    borderWidth: 3,
-  },
-  cornerTL: { top: 0, left: 0,  borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 4 },
-  cornerTR: { top: 0, right: 0, borderLeftWidth: 0,  borderBottomWidth: 0, borderTopRightRadius: 4 },
-  cornerBL: { bottom: 0, left: 0,  borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 4 },
-  cornerBR: { bottom: 0, right: 0, borderLeftWidth: 0,  borderTopWidth: 0, borderBottomRightRadius: 4 },
+  frame:    { width: 280, height: 280, position: 'relative', alignItems: 'center' },
+  corner:   { position: 'absolute', width: 28, height: 28, borderWidth: 3 },
+  cornerTL: { top: 0,    left: 0,  borderRightWidth: 0,  borderBottomWidth: 0, borderTopLeftRadius: 4 },
+  cornerTR: { top: 0,    right: 0, borderLeftWidth: 0,   borderBottomWidth: 0, borderTopRightRadius: 4 },
+  cornerBL: { bottom: 0, left: 0,  borderRightWidth: 0,  borderTopWidth: 0,    borderBottomLeftRadius: 4 },
+  cornerBR: { bottom: 0, right: 0, borderLeftWidth: 0,   borderTopWidth: 0,    borderBottomRightRadius: 4 },
   scanLine: {
     position: 'absolute', top: 0, left: 8, right: 8,
     height: 1.5, opacity: 0.7,
   },
-  frameHint: {
-    color:      'rgba(255,255,255,0.55)',
-    fontSize:   13,
-    marginTop:  20,
-    fontWeight: '400',
-  },
+  frameHint: { color: 'rgba(255,255,255,0.55)', fontSize: 13, marginTop: 20, fontWeight: '400' },
 
-  bottomBar: {
-    position:        'absolute', bottom: 60, left: 0, right: 0,
-    alignItems:      'center',
-  },
+  bottomBar: { position: 'absolute', bottom: 60, left: 0, right: 0, alignItems: 'center' },
   scanBtn: {
-    backgroundColor: C.cyan,
-    borderRadius:    36,
+    backgroundColor:   C.cyan,
+    borderRadius:      36,
     paddingHorizontal: 56,
     paddingVertical:   18,
-    shadowColor:     C.cyan,
-    shadowOffset:    { width: 0, height: 0 },
-    shadowOpacity:   0.55,
-    shadowRadius:    16,
-    elevation:       10,
+    shadowColor:       C.cyan,
+    shadowOffset:      { width: 0, height: 0 },
+    shadowOpacity:     0.55,
+    shadowRadius:      16,
+    elevation:         10,
   },
   scanBtnScanning: { opacity: 0.7 },
-  scanBtnText: {
-    color:          '#000',
-    fontSize:       16,
-    fontWeight:     '900',
-    letterSpacing:  2,
-  },
+  scanBtnText:     { color: '#000', fontSize: 16, fontWeight: '900', letterSpacing: 2 },
 
-  // Result
-  resultContent: { padding: 24, paddingTop: 64, paddingBottom: 48 },
-  resultWrapper:  { gap: 16 },
-  resultTitle: {
-    color:         C.cyan,
-    fontSize:      26,
-    fontWeight:    '900',
-    textAlign:     'center',
-    letterSpacing: 1.5,
-  },
-  photoFrame: {
-    borderRadius: 16,
-    borderWidth:  2,
-    overflow:     'hidden',
-  },
+  resultContent:    { padding: 24, paddingTop: 64, paddingBottom: 48 },
+  resultWrapper:    { gap: 16 },
+  resultTitle:      { color: C.cyan, fontSize: 26, fontWeight: '900', textAlign: 'center', letterSpacing: 1.5 },
+  photoFrame:       { borderRadius: 16, borderWidth: 2, overflow: 'hidden' },
   photo:            { width: '100%', height: 240 },
   photoPlaceholder: { width: '100%', height: 240, justifyContent: 'center', alignItems: 'center' },
-
-  rarityBanner: {
-    alignSelf:         'center',
-    paddingHorizontal: 28,
-    paddingVertical:   8,
-    borderRadius:      24,
-    borderWidth:       1.5,
-  },
+  rarityBanner:     { alignSelf: 'center', paddingHorizontal: 28, paddingVertical: 8, borderRadius: 24, borderWidth: 1.5 },
   rarityBannerText: { fontWeight: '800', fontSize: 14, letterSpacing: 2 },
 
-  carInfoCard: {
-    backgroundColor: C.surface,
-    borderRadius:    16,
-    borderWidth:     1,
-    borderColor:     C.border,
-    padding:         20,
-    gap:             4,
-  },
-  carMake:          { color: C.textSecondary, fontSize: 14 },
-  carModel:         { color: C.textPrimary,   fontSize: 30, fontWeight: '900', lineHeight: 36 },
-  carSpecsDivider:  { height: 1, backgroundColor: C.border, marginVertical: 12 },
-  carSpecs:         { gap: 10 },
-  specRow:          { flexDirection: 'row', justifyContent: 'space-between' },
-  specLabel:        { color: C.textSecondary, fontSize: 14 },
-  specValue:        { color: C.textPrimary,   fontSize: 14, fontWeight: '600' },
+  carInfoCard:     { backgroundColor: C.surface, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 20, gap: 4 },
+  carMake:         { color: C.textSecondary, fontSize: 14 },
+  carModel:        { color: C.textPrimary,   fontSize: 30, fontWeight: '900', lineHeight: 36 },
+  carSpecsDivider: { height: 1, backgroundColor: C.border, marginVertical: 12 },
+  carSpecs:        { gap: 10 },
+  specRow:         { flexDirection: 'row', justifyContent: 'space-between' },
+  specLabel:       { color: C.textSecondary, fontSize: 14 },
+  specValue:       { color: C.textPrimary,   fontSize: 14, fontWeight: '600' },
 
-  savedBanner: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             10,
-    backgroundColor: C.surface,
-    borderRadius:    14,
-    padding:         16,
-    borderWidth:     1,
-  },
-  savedCheck:    { color: C.cyan,          fontSize: 16, fontWeight: '900' },
-  savedText:     { color: C.textPrimary,   fontSize: 14, fontWeight: '700', flex: 1 },
+  savedBanner:   { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1 },
+  savedCheck:    { color: C.cyan,        fontSize: 16, fontWeight: '900' },
+  savedText:     { color: C.textPrimary, fontSize: 14, fontWeight: '700', flex: 1 },
   xpPill:        { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
   xpPillText:    { fontSize: 13, fontWeight: '800' },
   coinsPill:     { backgroundColor: C.surfaceHigh, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
   coinsPillText: { color: C.legendary, fontSize: 13, fontWeight: '800' },
+  saveBtn:       { borderRadius: 14, paddingVertical: 18, alignItems: 'center' },
+  saveBtnText:   { color: '#000', fontSize: 16, fontWeight: '900', letterSpacing: 0.5 },
+  newScanBtn:    { alignItems: 'center', paddingVertical: 12 },
+  newScanText:   { color: C.textSecondary, fontSize: 15, fontWeight: '500' },
 
-  saveBtn: {
-    borderRadius:    14,
-    paddingVertical: 18,
-    alignItems:      'center',
-  },
-  saveBtnText: { color: '#000', fontSize: 16, fontWeight: '900', letterSpacing: 0.5 },
-  newScanBtn:  { alignItems: 'center', paddingVertical: 12 },
-  newScanText: { color: C.textSecondary, fontSize: 15, fontWeight: '500' },
-
-  // Permissions
-  permContainer: {
-    flex: 1, backgroundColor: C.bg,
-    justifyContent: 'center', alignItems: 'center',
-    padding: 32, gap: 12,
-  },
-  permIcon:    { fontSize: 52 },
-  permTitle:   { color: C.textPrimary,   fontSize: 22, fontWeight: '800' },
-  permSub:     { color: C.textSecondary, fontSize: 14, textAlign: 'center', lineHeight: 20 },
-  permBtn:     { backgroundColor: C.cyan, borderRadius: 14, paddingHorizontal: 28, paddingVertical: 14, marginTop: 8 },
-  permBtnText: { color: '#000', fontSize: 15, fontWeight: '800' },
+  permContainer: { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center', padding: 32, gap: 12 },
+  permIcon:      { fontSize: 52 },
+  permTitle:     { color: C.textPrimary,   fontSize: 22, fontWeight: '800' },
+  permSub:       { color: C.textSecondary, fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  permBtn:       { backgroundColor: C.cyan, borderRadius: 14, paddingHorizontal: 28, paddingVertical: 14, marginTop: 8 },
+  permBtnText:   { color: '#000', fontSize: 15, fontWeight: '800' },
 });
