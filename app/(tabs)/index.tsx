@@ -1,269 +1,180 @@
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Location from 'expo-location';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
+  Alert,
+  Animated,
+  Easing,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  Image,
 } from 'react-native';
+import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import * as Location from 'expo-location';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { supabase } from '../../supabase';
-import {
-  MAX_FREE_SCANS_PER_DAY,
-  checkScanQuota,
-  recognizeCar,
-} from '../../services/CarRecognitionService';
-import { ScanResult } from '../../types/car.types';
-import { C } from '../../constants/colors';
-import { COINS_PER_RARITY } from '../../constants/coins';
-import { XP_PER_RARITY } from '../../constants/xp';
+import { recognizeCar, checkScanQuota, MAX_FREE_SCANS_PER_DAY } from '../../services/CarRecognitionService';
+import { getXpForRarity } from '../../constants/levels';
 import { awardCoins } from '../../services/CoinsService';
-import { updateDailyQuestsOnScan } from '../../services/dailyQuestService';
-import { shareSpotCard } from '../../services/shareCardService';
-import { levelUpEmitter } from '../../services/levelUpEmitter';
-import { CardFlipReveal } from '../../components/scan/CardFlipReveal';
-import { FloatingReward } from '../../components/ui/FloatingRewards';
-import { useFloatingRewards } from '../../hooks/useFloatingRewards';
-
-const SCAN_RED     = '#FF2D2D';
-const SCAN_RED_DIM = '#FF2D2D44';
-
-const LEVEL_THRESHOLDS = [0, 100, 250, 500, 900, 1400, 2000, 2800, 3800, 5000];
-
-function getLevelFromXp(xp: number): number {
-  let level = 1;
-  for (let i = 0; i < LEVEL_THRESHOLDS.length; i++) {
-    if (xp >= LEVEL_THRESHOLDS[i]) level = i + 1;
-    else break;
-  }
-  return level;
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  const chars  = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  const lookup = new Uint8Array(256);
-  for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
-  const b64    = base64.replace(/=+$/, '');
-  const len    = b64.length;
-  const bufLen = Math.floor(len * 0.75);
-  const bytes  = new Uint8Array(bufLen);
-  let p = 0;
-  for (let i = 0; i < len; i += 4) {
-    const e1 = lookup[b64.charCodeAt(i)];
-    const e2 = lookup[b64.charCodeAt(i + 1)];
-    const e3 = lookup[b64.charCodeAt(i + 2)] ?? 0;
-    const e4 = lookup[b64.charCodeAt(i + 3)] ?? 0;
-    if (p < bufLen) bytes[p++] = (e1 << 2) | (e2 >> 4);
-    if (p < bufLen) bytes[p++] = ((e2 & 0xf) << 4) | (e3 >> 2);
-    if (p < bufLen) bytes[p++] = ((e3 & 0x3) << 6) | e4;
-  }
-  return bytes;
-}
+import { COINS_PER_RARITY } from '../../constants/coins';
+import { C } from '../../constants/colors';
 
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
-  const [isScanning, setIsScanning]     = useState(false);
-  const [scanResult, setScanResult]     = useState<ScanResult | null>(null);
-  const [showFlip,   setShowFlip]       = useState(false);
-  const [saved,      setSaved]          = useState(false);
-  const [coinsEarned, setCoinsEarned]   = useState(0);
-  const [xpEarned,    setXpEarned]      = useState(0);
-  const [scansToday, setScansToday]     = useState(0);
-  const [scanError,  setScanError]      = useState<string | null>(null);
-  const [debugError, setDebugError]     = useState<string | null>(null);
-  const [isSharing,  setIsSharing]      = useState(false);
-  const cameraRef = useRef<CameraView | null>(null);
+  const [locationPermission, requestLocationPermission] = Location.useForegroundPermissions();
+  const [scanning,     setScanning]     = useState(false);
+  const [result,       setResult]       = useState<any>(null);
+  const [scansToday,   setScansToday]   = useState(0);
+  const [saving,       setSaving]       = useState(false);
+  const [saved,        setSaved]        = useState(false);
+  const [photoUri,     setPhotoUri]     = useState<string | null>(null);
+  const [xpEarned,     setXpEarned]     = useState(0);
+  const [coinsEarned,  setCoinsEarned]  = useState(0);
 
-  const { rewards, triggerReward, removeReward } = useFloatingRewards();
+  const cameraRef    = useRef<CameraView>(null);
+  const scanLineAnim = useRef(new Animated.Value(0)).current;
+  const resultAnim   = useRef(new Animated.Value(0)).current;
+  const pulseAnim    = useRef(new Animated.Value(1)).current;
 
+  // Scan line loop
   useEffect(() => {
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const quota = await checkScanQuota(user.id).catch(() => ({ scansToday: 0, canScan: true }));
-        setScansToday(quota.scansToday);
-      }
-    })();
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scanLineAnim, { toValue: 1, duration: 1800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(scanLineAnim, { toValue: 0, duration: 1800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
   }, []);
 
-  if (!permission) return <View />;
-
-  if (!permission.granted) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.text}>Permission caméra requise</Text>
-        <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Autoriser la caméra</Text>
-        </TouchableOpacity>
-      </View>
+  // Pulse bouton
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.03, duration: 900,  useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1,    duration: 900,  useNativeDriver: true }),
+      ])
     );
-  }
+    pulse.start();
+    return () => pulse.stop();
+  }, []);
+
+  useEffect(() => {
+    loadQuota();
+  }, []);
+
+  const loadQuota = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const quota = await checkScanQuota(user.id);
+    setScansToday(quota.scansToday);
+  };
+
+  const scanLineY = scanLineAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 260],
+  });
 
   const handleScan = async () => {
-    if (!cameraRef.current) return;
-    setIsScanning(true);
+    if (!cameraRef.current || scanning) return;
+    if (scansToday >= MAX_FREE_SCANS_PER_DAY) {
+      Alert.alert('Quota atteint', `Tu as utilisé tes ${MAX_FREE_SCANS_PER_DAY} scans du jour. Reviens demain !`);
+      return;
+    }
+
+    setScanning(true);
+    setResult(null);
+    setPhotoUri(null);
     setSaved(false);
-    setCoinsEarned(0);
-    setXpEarned(0);
-    setScanError(null);
-    setDebugError(null);
+
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+      if (!photo?.uri) throw new Error('Aucune photo prise');
+
+      setPhotoUri(photo.uri);
+
+      const compressed = await ImageManipulator.manipulateAsync(
+        photo.uri,
+        [{ resize: { width: 1024 } }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      );
+
+      const car = await recognizeCar(compressed.base64!);
+      setResult(car);
+
+      Animated.spring(resultAnim, { toValue: 1, friction: 7, tension: 50, useNativeDriver: true }).start();
+    } catch (err: any) {
+      Alert.alert('Erreur', err.message ?? 'Impossible d\'identifier la voiture');
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!result || saving) return;
+    setSaving(true);
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
+      if (!user) throw new Error('Non connecté');
 
-      const quota = await checkScanQuota(user.id).catch(() => ({ scansToday: 0, canScan: true }));
-      setScansToday(quota.scansToday);
-      if (!quota.canScan) { setScanError('quota_exceeded'); setIsScanning(false); return; }
+      let photoUrl: string | null = null;
+      if (photoUri) {
+        const filename  = `${user.id}/${Date.now()}.jpg`;
+        const response  = await fetch(photoUri);
+        const blob      = await response.blob();
+        const arrayBuf  = await blob.arrayBuffer();
+        const { error: uploadError } = await supabase.storage
+          .from('spot-photos').upload(filename, arrayBuf, { contentType: 'image/jpeg', upsert: false });
+        if (!uploadError) {
+          const { data: urlData } = supabase.storage.from('spot-photos').getPublicUrl(filename);
+          photoUrl = urlData.publicUrl;
+        }
+      }
 
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
-      if (!photo) throw new Error('takePictureAsync returned null');
-
-      const base64 = await FileSystem.readAsStringAsync(photo.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      let latitude:  number | null = null;
+      let latitude: number | null  = null;
       let longitude: number | null = null;
-      let photoUrl:  string | null = null;
-
-      const [, , car] = await Promise.all([
-        (async () => {
-          try {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status === 'granted') {
-              const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-              latitude  = loc.coords.latitude;
-              longitude = loc.coords.longitude;
-            }
-          } catch (e) { console.log('GPS error:', e); }
-        })(),
-        (async () => {
-          try {
-            const fileName = `${user.id}_${Date.now()}.jpg`;
-            const uint8 = base64ToUint8Array(base64);
-            const { error: uploadError } = await supabase.storage
-              .from('spot-photos').upload(fileName, uint8, { contentType: 'image/jpeg' });
-            if (!uploadError) {
-              const { data: { publicUrl } } = supabase.storage
-                .from('spot-photos').getPublicUrl(fileName);
-              photoUrl = publicUrl;
-            }
-          } catch (e) { console.log('Upload failed:', e); }
-        })(),
-        recognizeCar(base64),
-      ]);
-
-      // ✅ pokedex_model_id maintenant typé et retourné par recognizeCar
-      const pokedexModelId = car.pokedex_model_id ?? null;
-
-      console.log(`[scan] ${car.make} ${car.model} -> pokedex_model_id: ${pokedexModelId}`);
-
-      setScanResult({ ...car, photo_url: photoUrl });
-      setShowFlip(true);
-      setScansToday(prev => prev + 1);
+      if (locationPermission?.granted) {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        latitude  = loc.coords.latitude;
+        longitude = loc.coords.longitude;
+      } else {
+        await requestLocationPermission();
+      }
 
       const { error: insertError } = await supabase.from('spots').insert({
         user_id:          user.id,
-        make:             car.make,
-        model:            car.model,
-        year:             car.year,
-        engine:           car.engine,
-        horsepower:       car.horsepower,
-        rarity:           car.rarity,
+        make:             result.make,
+        model:            result.model,
+        year:             result.year,
+        engine:           result.engine,
+        horsepower:       result.horsepower,
+        rarity:           result.rarity,
+        photo_url:        photoUrl,
         latitude,
         longitude,
-        photo_url:        photoUrl,
-        pokedex_model_id: pokedexModelId,
+        pokedex_model_id: result.pokedex_model_id ?? null,
       });
 
-      if (!insertError) {
-        setSaved(true);
+      if (insertError) throw new Error(insertError.message);
 
-        const coins = COINS_PER_RARITY[car.rarity] ?? 1;
-        setCoinsEarned(coins);
-        await awardCoins(user.id, coins);
+      const xp    = getXpForRarity(result.rarity);
+      const coins = COINS_PER_RARITY[result.rarity as keyof typeof COINS_PER_RARITY] ?? 1;
+      await awardCoins(user.id, coins);
 
-        const xp = XP_PER_RARITY[car.rarity] ?? 10;
-        setXpEarned(xp);
-
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('xp')
-          .eq('id', user.id)
-          .single();
-
-        if (profile) {
-          const oldLevel = getLevelFromXp(profile.xp ?? 0);
-          const newLevel = getLevelFromXp((profile.xp ?? 0) + xp);
-          if (newLevel > oldLevel) {
-            setTimeout(() => levelUpEmitter.emit('levelUp', { newLevel }), 2200);
-          }
-        }
-
-        const { error: xpError } = await supabase.rpc('increment_xp', {
-          user_id: user.id,
-          amount:  xp,
-        });
-        if (xpError) console.log('XP increment error:', xpError.message);
-
-        setTimeout(() => {
-          triggerReward('xp',    xp);
-          triggerReward('coins', coins);
-        }, 900);
-
-        updateDailyQuestsOnScan(user.id, { rarity: car.rarity, make: car.make })
-          .then(completedIds => {
-            if (completedIds.length > 0) setTimeout(() => triggerReward('quest', 0), 1400);
-          })
-          .catch(e => console.log('Daily quest update error:', e));
-
-      } else {
-        console.log('[scan] Insert error:', insertError.message);
-      }
-
-    } catch (err) {
-      let msg = '';
-      if (err instanceof Error) msg = err.message || err.toString();
-      else if (typeof err === 'string') msg = err;
-      else msg = JSON.stringify(err);
-      if (!msg || msg === 'Error') msg = 'Unknown error';
-      console.error('Scan error:', msg);
-      setDebugError(msg);
-      setScanError(msg.includes('no_car_detected') ? 'no_car' : 'generic');
+      setXpEarned(xp);
+      setCoinsEarned(coins);
+      setSaved(true);
+      setScansToday(prev => prev + 1);
+    } catch (err: any) {
+      Alert.alert('Erreur', err.message ?? 'Impossible de sauvegarder');
     } finally {
-      setIsScanning(false);
+      setSaving(false);
     }
-  };
-
-  const handleShare = async () => {
-    if (!scanResult) return;
-    setIsSharing(true);
-    try {
-      await shareSpotCard({
-        make:     scanResult.make,
-        model:    scanResult.model,
-        year:     scanResult.year ?? null,
-        rarity:   scanResult.rarity as any,
-        photoUrl: scanResult.photo_url ?? null,
-      });
-    } finally {
-      setIsSharing(false);
-    }
-  };
-
-  const resetScan = () => {
-    setScanResult(null);
-    setShowFlip(false);
-    setSaved(false);
-    setCoinsEarned(0);
-    setXpEarned(0);
-    setScanError(null);
-    setDebugError(null);
   };
 
   const getRarityColor = (rarity: string) => {
@@ -276,221 +187,298 @@ export default function ScannerScreen() {
     }
   };
 
-  const scansLeft = MAX_FREE_SCANS_PER_DAY - scansToday;
+  const getRarityLabel = (rarity: string) => {
+    switch (rarity) {
+      case 'platine':    return 'PLATINE';
+      case 'legendaire': return 'LÉGENDAIRE';
+      case 'epique':     return 'ÉPIQUE';
+      case 'rare':       return 'RARE';
+      default:           return 'COMMUN';
+    }
+  };
 
-  if (scanResult) {
-    const rarityColor = getRarityColor(scanResult.rarity);
+  if (!permission) return <View style={styles.container} />;
+
+  if (!permission.granted) {
     return (
-      <View style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.resultContainer}>
-          <View style={styles.resultAccentLine} />
-          <Text style={styles.successText}>SPOT RÉUSSI !</Text>
-
-          <View style={[styles.photoWrapper, { borderColor: rarityColor }]}>
-            {scanResult.photo_url
-              ? <Image source={{ uri: scanResult.photo_url }} style={styles.resultPhoto} resizeMode="cover" />
-              : <View style={styles.resultPhotoPlaceholder}>
-                  <Text style={{ color: C.textSecondary, fontSize: 40 }}>🚗</Text>
-                </View>
-            }
-          </View>
-
-          <View style={[styles.rarityBadge, { backgroundColor: rarityColor + '33', borderColor: rarityColor }]}>
-            <Text style={[styles.rarityText, { color: rarityColor }]}>{scanResult.rarity.toUpperCase()}</Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.carTitle}>{scanResult.make}{scanResult.year ? ` · ${scanResult.year}` : ''}</Text>
-            <Text style={styles.carModel}>{scanResult.model}</Text>
-            <View style={styles.divider} />
-            {([
-              ['Moteur',       scanResult.engine],
-              ['Puissance',    `${scanResult.horsepower} ch`],
-              ['Confiance IA', `${scanResult.confidence}%`],
-            ] as [string, string][]).map(([label, value]) => (
-              <View key={label} style={styles.specRow}>
-                <Text style={styles.specLabel}>{label}</Text>
-                <Text style={styles.specValue}>{value}</Text>
-              </View>
-            ))}
-          </View>
-
-          {saved && (
-            <View style={styles.savedBanner}>
-              <View style={styles.savedRow}>
-                <Text style={styles.savedText}>✓ Ajouté à ton Garage !</Text>
-                <View style={styles.savedRewards}>
-                  {xpEarned > 0 && (
-                    <View style={[styles.rewardPill, { borderColor: C.cyan + '55' }]}>
-                      <Text style={[styles.rewardPillText, { color: C.cyan }]}>+{xpEarned} XP</Text>
-                    </View>
-                  )}
-                  {coinsEarned > 0 && (
-                    <View style={styles.coinsBadge}>
-                      <Text style={styles.coinsText}>+{coinsEarned} 🪙</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-            </View>
-          )}
-
-          <View style={styles.actionsRow}>
-            <TouchableOpacity
-              style={[styles.shareButton, { borderColor: rarityColor }]}
-              onPress={handleShare}
-              disabled={isSharing}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.shareButtonText, { color: rarityColor }]}>
-                {isSharing ? '...' : '📲 Partager'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.button} onPress={resetScan}>
-              <Text style={styles.buttonText}>Scanner encore</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-
-        {showFlip && (
-          <CardFlipReveal result={scanResult} coinsEarned={coinsEarned} onDismiss={() => setShowFlip(false)} />
-        )}
-
-        {rewards.map(item => (
-          <FloatingReward key={item.id} item={item} onComplete={removeReward} bottomOffset={180} />
-        ))}
+      <View style={styles.permContainer}>
+        <Text style={styles.permIcon}>📷</Text>
+        <Text style={styles.permTitle}>Accès caméra requis</Text>
+        <Text style={styles.permSub}>CarSpotter a besoin de ta caméra pour identifier les voitures</Text>
+        <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
+          <Text style={styles.permBtnText}>Autoriser la caméra</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
+  if (result) {
+    const rarityColor = getRarityColor(result.rarity);
+    return (
+      <ScrollView style={styles.container} contentContainerStyle={styles.resultContent} bounces={false}>
+        <Animated.View style={[
+          styles.resultWrapper,
+          { opacity: resultAnim, transform: [{ scale: resultAnim.interpolate({ inputRange: [0,1], outputRange: [0.95,1] }) }] },
+        ]}>
+
+          <Text style={styles.resultTitle}>SPOT RÉUSSI !</Text>
+
+          <View style={[styles.photoFrame, { borderColor: rarityColor }]}>
+            {photoUri
+              ? <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="cover" />
+              : <View style={[styles.photoPlaceholder, { backgroundColor: rarityColor + '22' }]}>
+                  <Text style={{ fontSize: 48 }}>🚗</Text>
+                </View>
+            }
+          </View>
+
+          <View style={[styles.rarityBanner, { backgroundColor: rarityColor + '22', borderColor: rarityColor }]}>
+            <Text style={[styles.rarityBannerText, { color: rarityColor }]}>
+              {getRarityLabel(result.rarity)}
+            </Text>
+          </View>
+
+          <View style={styles.carInfoCard}>
+            <Text style={styles.carMake}>{result.make}</Text>
+            <Text style={styles.carModel}>{result.model}</Text>
+            <View style={styles.carSpecsDivider} />
+            <View style={styles.carSpecs}>
+              {[
+                ['Moteur',      result.engine],
+                ['Puissance',   `${result.horsepower} ch`],
+                ['Confiance IA',`${result.confidence}%`],
+              ].map(([label, value]) => (
+                <View key={label} style={styles.specRow}>
+                  <Text style={styles.specLabel}>{label}</Text>
+                  <Text style={styles.specValue}>{value}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {saved ? (
+            <View style={[styles.savedBanner, { borderColor: rarityColor + '55' }]}>
+              <Text style={styles.savedCheck}>✓</Text>
+              <Text style={styles.savedText}>Ajouté à ton Garage !</Text>
+              <View style={[styles.xpPill, { backgroundColor: rarityColor + '22' }]}>
+                <Text style={[styles.xpPillText, { color: rarityColor }]}>+{xpEarned} XP</Text>
+              </View>
+              <View style={styles.coinsPill}>
+                <Text style={styles.coinsPillText}>+{coinsEarned} 🪙</Text>
+              </View>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[styles.saveBtn, { backgroundColor: rarityColor }]}
+              onPress={handleSave}
+              disabled={saving}
+              activeOpacity={0.85}
+            >
+              {saving
+                ? <ActivityIndicator color="#000" />
+                : <Text style={styles.saveBtnText}>Enregistrer le spot</Text>
+              }
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={styles.newScanBtn} onPress={() => {
+            setResult(null); setPhotoUri(null); setSaved(false);
+          }}>
+            <Text style={styles.newScanText}>Nouveau scan</Text>
+          </TouchableOpacity>
+
+        </Animated.View>
+      </ScrollView>
+    );
+  }
+
+  const remaining = MAX_FREE_SCANS_PER_DAY - scansToday;
+
   return (
     <View style={styles.container}>
-      <CameraView style={StyleSheet.absoluteFillObject} facing="back" ref={cameraRef} />
+      <CameraView ref={cameraRef} style={styles.camera} facing="back">
 
-      <View style={styles.viewfinder} pointerEvents="none">
-        <View style={styles.cornerTL} />
-        <View style={styles.cornerTR} />
-        <View style={styles.cornerBL} />
-        <View style={styles.cornerBR} />
-        <View style={styles.scanLine} />
-      </View>
-
-      <View style={styles.quotaBanner} pointerEvents="none">
-        <Text style={styles.quotaText}>
-          {scansLeft > 0
-            ? `${scansLeft} scan${scansLeft > 1 ? 's' : ''} restant${scansLeft > 1 ? 's' : ''}`
-            : 'Limite atteinte'}
-        </Text>
-      </View>
-
-      {scanError === 'quota_exceeded' && (
-        <View style={styles.overlay}>
-          <Text style={styles.errorTitle}>Limite atteinte</Text>
-          <Text style={styles.errorSubtitle}>{`${MAX_FREE_SCANS_PER_DAY} scans utilisés aujourd'hui.\nReviens demain !`}</Text>
-          <TouchableOpacity style={styles.premiumButton}>
-            <Text style={styles.premiumButtonText}>Passer Premium</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.ghostButton} onPress={resetScan}>
-            <Text style={styles.ghostButtonText}>Plus tard</Text>
-          </TouchableOpacity>
+        {/* Quota */}
+        <View style={styles.quotaBar}>
+          <Text style={styles.quotaText}>
+            {remaining > 0 ? `${remaining} scan${remaining > 1 ? 's' : ''} restant${remaining > 1 ? 's' : ''}` : 'Quota atteint pour aujourd\'hui'}
+          </Text>
         </View>
-      )}
 
-      {scanError === 'no_car' && (
-        <View style={styles.overlay}>
-          <Text style={styles.errorTitle}>Aucune voiture détectée</Text>
-          <Text style={styles.errorSubtitle}>Réessaie avec une meilleure vue !</Text>
-          <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>Réessayer</Text>
-          </TouchableOpacity>
+        {/* Cadre cyan (plus rouge) */}
+        <View style={styles.frameContainer}>
+          <View style={styles.frame}>
+            <View style={[styles.corner, styles.cornerTL, { borderColor: C.cyan }]} />
+            <View style={[styles.corner, styles.cornerTR, { borderColor: C.cyan }]} />
+            <View style={[styles.corner, styles.cornerBL, { borderColor: C.cyan }]} />
+            <View style={[styles.corner, styles.cornerBR, { borderColor: C.cyan }]} />
+            {/* Ligne de scan animée */}
+            <Animated.View style={[styles.scanLine, { transform: [{ translateY: scanLineY }], backgroundColor: C.cyan }]} />
+          </View>
+          <Text style={styles.frameHint}>Centre la voiture dans le cadre</Text>
         </View>
-      )}
 
-      {scanError === 'generic' && (
-        <View style={styles.overlay}>
-          <Text style={styles.errorTitle}>Erreur</Text>
-          <Text style={styles.errorSubtitle}>{debugError}</Text>
-          <TouchableOpacity style={styles.button} onPress={resetScan}>
-            <Text style={styles.buttonText}>Réessayer</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {isScanning && !scanError && (
-        <View style={styles.overlay}>
-          <ActivityIndicator size="large" color={SCAN_RED} />
-          <Text style={styles.scanningText}>Analyse IA en cours...</Text>
-        </View>
-      )}
-
-      {!isScanning && !scanError && (
+        {/* Bouton Scanner */}
         <View style={styles.bottomBar}>
-          <Text style={styles.hint}>Centre la voiture dans le cadre</Text>
-          <TouchableOpacity
-            style={[styles.scanButton, scansLeft <= 0 && styles.scanButtonDisabled]}
-            onPress={handleScan}
-            disabled={scansLeft <= 0}
-          >
-            <Text style={[styles.scanButtonText, scansLeft <= 0 && { color: C.textTertiary }]}>
-              {scansLeft <= 0 ? 'BLOQUÉ' : 'SCANNER'}
-            </Text>
-          </TouchableOpacity>
+          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+            <TouchableOpacity
+              style={[styles.scanBtn, scanning && styles.scanBtnScanning]}
+              onPress={handleScan}
+              disabled={scanning || remaining <= 0}
+              activeOpacity={0.85}
+            >
+              {scanning
+                ? <ActivityIndicator color="#fff" size="large" />
+                : <Text style={styles.scanBtnText}>SCANNER</Text>
+              }
+            </TouchableOpacity>
+          </Animated.View>
         </View>
-      )}
+
+      </CameraView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container:  { flex: 1, backgroundColor: '#000' },
-  viewfinder: { position: 'absolute', top: '25%', left: '10%', right: '10%', bottom: '30%' },
-  cornerTL: { position: 'absolute', top: 0, left: 0, width: 34, height: 34, borderTopWidth: 3, borderLeftWidth: 3, borderColor: SCAN_RED, borderTopLeftRadius: 2 },
-  cornerTR: { position: 'absolute', top: 0, right: 0, width: 34, height: 34, borderTopWidth: 3, borderRightWidth: 3, borderColor: SCAN_RED, borderTopRightRadius: 2 },
-  cornerBL: { position: 'absolute', bottom: 0, left: 0, width: 34, height: 34, borderBottomWidth: 3, borderLeftWidth: 3, borderColor: SCAN_RED, borderBottomLeftRadius: 2 },
-  cornerBR: { position: 'absolute', bottom: 0, right: 0, width: 34, height: 34, borderBottomWidth: 3, borderRightWidth: 3, borderColor: SCAN_RED, borderBottomRightRadius: 2 },
-  scanLine: { position: 'absolute', left: 12, right: 12, top: '50%', height: 1, backgroundColor: SCAN_RED_DIM },
-  quotaBanner: { position: 'absolute', top: 60, left: 0, right: 0, alignItems: 'center' },
-  quotaText:   { backgroundColor: 'rgba(0,0,0,0.65)', color: '#fff', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, fontSize: 13, fontWeight: '600', overflow: 'hidden' },
-  bottomBar:   { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center' },
-  hint:        { color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 18 },
-  scanButton:  { backgroundColor: SCAN_RED, paddingVertical: 18, paddingHorizontal: 56, borderRadius: 14, shadowColor: SCAN_RED, shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 4 }, elevation: 10 },
-  scanButtonDisabled: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, shadowOpacity: 0 },
-  scanButtonText:     { fontSize: 18, fontWeight: '900', color: '#fff', letterSpacing: 2 },
-  overlay:     { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.84)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  scanningText:  { color: SCAN_RED, fontSize: 18, fontWeight: 'bold', marginTop: 20, letterSpacing: 1 },
-  errorTitle:    { color: '#fff', fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 12 },
-  errorSubtitle: { color: C.textSecondary, fontSize: 13, textAlign: 'center', marginBottom: 28, lineHeight: 20 },
-  premiumButton:     { backgroundColor: C.legendary, paddingVertical: 15, paddingHorizontal: 44, borderRadius: 12, marginBottom: 14 },
-  premiumButtonText: { fontSize: 17, fontWeight: 'bold', color: '#000' },
-  ghostButton:       { paddingVertical: 10 },
-  ghostButtonText:   { color: C.textSecondary, fontSize: 14 },
-  resultContainer:  { flexGrow: 1, backgroundColor: C.bg, alignItems: 'center', padding: 24, paddingTop: 70 },
-  resultAccentLine: { width: 48, height: 2, backgroundColor: C.cyan, borderRadius: 1, marginBottom: 20 },
-  successText:   { color: C.cyan, fontSize: 26, fontWeight: '900', marginBottom: 20, letterSpacing: 2 },
-  photoWrapper:  { width: '100%', borderRadius: 14, overflow: 'hidden', borderWidth: 2, marginBottom: 16 },
-  resultPhoto:   { width: '100%', height: 220 },
-  resultPhotoPlaceholder: { width: '100%', height: 220, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center' },
-  rarityBadge:   { paddingHorizontal: 20, paddingVertical: 6, borderRadius: 8, marginBottom: 20, borderWidth: 1 },
-  rarityText:    { fontWeight: 'bold', fontSize: 12, letterSpacing: 2 },
-  card:          { backgroundColor: C.surface, borderRadius: 14, padding: 22, width: '100%', borderWidth: 1, borderColor: C.border, marginBottom: 20 },
-  carTitle:      { color: C.textSecondary, fontSize: 16, fontWeight: '600' },
-  carModel:      { color: C.textPrimary, fontSize: 36, fontWeight: 'bold', marginBottom: 16 },
-  divider:       { height: 1, backgroundColor: C.border, marginBottom: 16 },
-  specRow:       { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  specLabel:     { color: C.textSecondary, fontSize: 14 },
-  specValue:     { color: C.textPrimary, fontSize: 14, fontWeight: '600' },
-  savedBanner:   { backgroundColor: C.cyanSoft, borderWidth: 1, borderColor: C.cyan + '55', borderRadius: 10, padding: 14, width: '100%', marginBottom: 16 },
-  savedRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  savedText:     { color: C.cyan, fontSize: 15, fontWeight: '700' },
-  savedRewards:  { flexDirection: 'row', gap: 6 },
-  rewardPill:    { backgroundColor: C.surface, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1 },
-  rewardPillText: { fontSize: 12, fontWeight: '900' },
-  coinsBadge:    { backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: C.border },
-  coinsText:     { color: C.legendary, fontSize: 14, fontWeight: '900' },
-  actionsRow:    { width: '100%', gap: 12 },
-  shareButton:   { borderWidth: 1.5, padding: 16, borderRadius: 12, width: '100%', alignItems: 'center', backgroundColor: 'transparent' },
-  shareButtonText: { fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
-  button:        { backgroundColor: SCAN_RED, padding: 16, borderRadius: 12, width: '100%', alignItems: 'center', shadowColor: SCAN_RED, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
-  buttonText:    { fontSize: 16, fontWeight: 'bold', color: '#fff', letterSpacing: 1 },
-  text:          { color: C.textPrimary, fontSize: 16, textAlign: 'center', marginBottom: 20 },
+  camera:     { flex: 1 },
+
+  quotaBar:  {
+    position:        'absolute', top: 60, left: 0, right: 0,
+    alignItems:      'center',
+  },
+  quotaText: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '500' },
+
+  frameContainer: {
+    position:       'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    justifyContent: 'center',  alignItems: 'center',
+  },
+  frame: {
+    width: 280, height: 280,
+    position:  'relative',
+    alignItems: 'center',
+  },
+  corner: {
+    position:    'absolute',
+    width:       28, height: 28,
+    borderWidth: 3,
+  },
+  cornerTL: { top: 0, left: 0,  borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 4 },
+  cornerTR: { top: 0, right: 0, borderLeftWidth: 0,  borderBottomWidth: 0, borderTopRightRadius: 4 },
+  cornerBL: { bottom: 0, left: 0,  borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 4 },
+  cornerBR: { bottom: 0, right: 0, borderLeftWidth: 0,  borderTopWidth: 0, borderBottomRightRadius: 4 },
+  scanLine: {
+    position: 'absolute', top: 0, left: 8, right: 8,
+    height: 1.5, opacity: 0.7,
+  },
+  frameHint: {
+    color:      'rgba(255,255,255,0.55)',
+    fontSize:   13,
+    marginTop:  20,
+    fontWeight: '400',
+  },
+
+  bottomBar: {
+    position:        'absolute', bottom: 60, left: 0, right: 0,
+    alignItems:      'center',
+  },
+  scanBtn: {
+    backgroundColor: C.cyan,
+    borderRadius:    36,
+    paddingHorizontal: 56,
+    paddingVertical:   18,
+    shadowColor:     C.cyan,
+    shadowOffset:    { width: 0, height: 0 },
+    shadowOpacity:   0.55,
+    shadowRadius:    16,
+    elevation:       10,
+  },
+  scanBtnScanning: { opacity: 0.7 },
+  scanBtnText: {
+    color:          '#000',
+    fontSize:       16,
+    fontWeight:     '900',
+    letterSpacing:  2,
+  },
+
+  // Result
+  resultContent: { padding: 24, paddingTop: 64, paddingBottom: 48 },
+  resultWrapper:  { gap: 16 },
+  resultTitle: {
+    color:         C.cyan,
+    fontSize:      26,
+    fontWeight:    '900',
+    textAlign:     'center',
+    letterSpacing: 1.5,
+  },
+  photoFrame: {
+    borderRadius: 16,
+    borderWidth:  2,
+    overflow:     'hidden',
+  },
+  photo:            { width: '100%', height: 240 },
+  photoPlaceholder: { width: '100%', height: 240, justifyContent: 'center', alignItems: 'center' },
+
+  rarityBanner: {
+    alignSelf:         'center',
+    paddingHorizontal: 28,
+    paddingVertical:   8,
+    borderRadius:      24,
+    borderWidth:       1.5,
+  },
+  rarityBannerText: { fontWeight: '800', fontSize: 14, letterSpacing: 2 },
+
+  carInfoCard: {
+    backgroundColor: C.surface,
+    borderRadius:    16,
+    borderWidth:     1,
+    borderColor:     C.border,
+    padding:         20,
+    gap:             4,
+  },
+  carMake:          { color: C.textSecondary, fontSize: 14 },
+  carModel:         { color: C.textPrimary,   fontSize: 30, fontWeight: '900', lineHeight: 36 },
+  carSpecsDivider:  { height: 1, backgroundColor: C.border, marginVertical: 12 },
+  carSpecs:         { gap: 10 },
+  specRow:          { flexDirection: 'row', justifyContent: 'space-between' },
+  specLabel:        { color: C.textSecondary, fontSize: 14 },
+  specValue:        { color: C.textPrimary,   fontSize: 14, fontWeight: '600' },
+
+  savedBanner: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             10,
+    backgroundColor: C.surface,
+    borderRadius:    14,
+    padding:         16,
+    borderWidth:     1,
+  },
+  savedCheck:    { color: C.cyan,          fontSize: 16, fontWeight: '900' },
+  savedText:     { color: C.textPrimary,   fontSize: 14, fontWeight: '700', flex: 1 },
+  xpPill:        { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
+  xpPillText:    { fontSize: 13, fontWeight: '800' },
+  coinsPill:     { backgroundColor: C.surfaceHigh, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
+  coinsPillText: { color: C.legendary, fontSize: 13, fontWeight: '800' },
+
+  saveBtn: {
+    borderRadius:    14,
+    paddingVertical: 18,
+    alignItems:      'center',
+  },
+  saveBtnText: { color: '#000', fontSize: 16, fontWeight: '900', letterSpacing: 0.5 },
+  newScanBtn:  { alignItems: 'center', paddingVertical: 12 },
+  newScanText: { color: C.textSecondary, fontSize: 15, fontWeight: '500' },
+
+  // Permissions
+  permContainer: {
+    flex: 1, backgroundColor: C.bg,
+    justifyContent: 'center', alignItems: 'center',
+    padding: 32, gap: 12,
+  },
+  permIcon:    { fontSize: 52 },
+  permTitle:   { color: C.textPrimary,   fontSize: 22, fontWeight: '800' },
+  permSub:     { color: C.textSecondary, fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  permBtn:     { backgroundColor: C.cyan, borderRadius: 14, paddingHorizontal: 28, paddingVertical: 14, marginTop: 8 },
+  permBtnText: { color: '#000', fontSize: 15, fontWeight: '800' },
 });

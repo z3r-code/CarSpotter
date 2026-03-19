@@ -13,7 +13,7 @@ import { supabase } from '../../supabase';
 import { C } from '../../constants/colors';
 
 const XP_THRESHOLDS = [0, 10, 25, 50, 100];
-const LEVEL_NAMES   = ['', 'Novice', 'Observateur', 'Chasseur', 'Expert', 'L\u00e9gende'];
+const LEVEL_NAMES   = ['', 'Novice', 'Observateur', 'Chasseur', 'Expert', 'Légende'];
 const LEVEL_COLORS  = ['', '#888888', C.rare, C.epic, C.legendary, C.cyan];
 
 function getXpForRarity(rarity: string): number {
@@ -56,7 +56,7 @@ type LeaderboardEntry = {
   isMe:       boolean;
 };
 
-const RANK_MEDALS = ['\uD83E\uDD47', '\uD83E\uDD48', '\uD83E\uDD49'];
+const RANK_MEDALS = ['🥇', '🥈', '🥉'];
 
 export default function LeaderboardScreen() {
   const [entries,    setEntries]    = useState<LeaderboardEntry[]>([]);
@@ -107,7 +107,7 @@ export default function LeaderboardScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Classement</Text>
-        <View style={styles.headerAccentLine} />
+        <View style={styles.accentLine} />
         <Text style={styles.subtitle}>
           {entries.length} spotter{entries.length > 1 ? 's' : ''}
         </Text>
@@ -116,13 +116,16 @@ export default function LeaderboardScreen() {
       <FlatList
         data={entries}
         keyExtractor={item => item.id}
-        contentContainerStyle={{ padding: 16 }}
+        contentContainerStyle={styles.listContent}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={C.cyan}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.cyan} />
+        }
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={styles.emptyIcon}>🏁</Text>
+            <Text style={styles.emptyTitle}>Sois le premier !</Text>
+            <Text style={styles.emptySub}>Invite des amis pour te mesurer à eux</Text>
+          </View>
         }
         renderItem={({ item, index }) => (
           <TouchableOpacity
@@ -145,8 +148,8 @@ export default function LeaderboardScreen() {
             {/* Infos */}
             <View style={styles.info}>
               <View style={styles.infoTop}>
-                <Text style={styles.username}>
-                  {item.username}{item.isMe ? '  \u00b7 Moi' : ''}
+                <Text style={styles.username} numberOfLines={1}>
+                  {item.username}{item.isMe ? '  · Moi' : ''}
                 </Text>
                 <View style={[styles.levelBadge, {
                   backgroundColor: item.levelColor + '22',
@@ -172,18 +175,18 @@ export default function LeaderboardScreen() {
               </View>
 
               <View style={styles.infoBottom}>
-                <Text style={styles.xpText}>{"\u2B50"} {item.xp} XP</Text>
-                <Text style={styles.spotText}>{"\uD83D\uDE97"} {item.spotCount} spot{item.spotCount > 1 ? 's' : ''}</Text>
+                <Text style={styles.xpText}>⭐ {item.xp} XP</Text>
+                <Text style={styles.spotText}>🚗 {item.spotCount} spot{item.spotCount > 1 ? 's' : ''}</Text>
                 {item.level < 5 && (
                   <Text style={styles.nextText}>
-                    {item.nextXp - item.xp} XP \u2192 LVL {item.level + 1}
+                    {item.nextXp - item.xp} XP → LVL {item.level + 1}
                   </Text>
                 )}
               </View>
             </View>
 
-            {/* Indicateur navigation */}
-            <Text style={styles.chevron}>\u203a</Text>
+            {/* Chevron propre — pas d'escape Unicode */}
+            <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
         )}
       />
@@ -192,26 +195,25 @@ export default function LeaderboardScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.bg },
-  centered:  { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' },
+  container:   { flex: 1, backgroundColor: C.bg },
+  centered:    { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' },
 
-  header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16 },
-  title:  { color: C.textPrimary, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
-  headerAccentLine: {
-    width: 36, height: 2, backgroundColor: C.cyan,
-    marginTop: 6, marginBottom: 6, borderRadius: 1,
-  },
-  subtitle: { color: C.textSecondary, fontSize: 13 },
+  header:    { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16 },
+  title:     { color: C.textPrimary, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
+  accentLine:{ width: 36, height: 2, backgroundColor: C.cyan, marginTop: 6, marginBottom: 6, borderRadius: 1 },
+  subtitle:  { color: C.textSecondary, fontSize: 13 },
+
+  listContent: { paddingHorizontal: 16, paddingBottom: 32 },
 
   card: {
-    flexDirection: 'row',
+    flexDirection:   'row',
     backgroundColor: C.surface,
-    borderRadius: 10,
-    marginBottom: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    alignItems: 'center',
+    borderRadius:    12,
+    marginBottom:    10,
+    padding:         14,
+    borderWidth:     1,
+    borderColor:     C.border,
+    alignItems:      'center',
   },
   cardMe:    { borderColor: C.cyan, backgroundColor: C.cyanSoft },
   cardFirst: { borderColor: C.legendary + '88' },
@@ -227,27 +229,26 @@ const styles = StyleSheet.create({
     alignItems:     'center',
     marginBottom:   2,
   },
-  username: { color: C.textPrimary, fontSize: 15, fontWeight: 'bold', flex: 1 },
-  levelBadge: {
-    borderRadius:      6,
-    paddingHorizontal: 8,
-    paddingVertical:   3,
-    borderWidth:       1,
-    marginLeft:        8,
-  },
-  levelText:  { fontSize: 11, fontWeight: 'bold' },
-  levelName:  { fontSize: 11, marginBottom: 6 },
+  username:   { color: C.textPrimary, fontSize: 15, fontWeight: '700', flex: 1, lineHeight: 20 },
+  levelBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, marginLeft: 8 },
+  levelText:  { fontSize: 11, fontWeight: '700' },
+  levelName:  { fontSize: 11, marginBottom: 6, lineHeight: 16 },
   xpBarBg: {
     height:          4,
     backgroundColor: C.surfaceHigh,
     borderRadius:    2,
     flexDirection:   'row',
     overflow:        'hidden',
-    marginBottom:    6,
+    marginBottom:    8,
   },
   infoBottom: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
   xpText:     { color: C.legendary,     fontSize: 12, fontWeight: '600' },
   spotText:   { color: C.textSecondary, fontSize: 12 },
   nextText:   { color: C.textTertiary,  fontSize: 11, marginLeft: 'auto' },
-  chevron:    { color: C.textTertiary,  fontSize: 22, marginLeft: 8 },
+  chevron:    { color: C.textTertiary,  fontSize: 24, marginLeft: 8, lineHeight: 28 },
+
+  empty:     { alignItems: 'center', paddingTop: 80, gap: 10 },
+  emptyIcon: { fontSize: 48 },
+  emptyTitle:{ color: C.textPrimary, fontSize: 20, fontWeight: '800' },
+  emptySub:  { color: C.textSecondary, fontSize: 14, lineHeight: 20 },
 });
